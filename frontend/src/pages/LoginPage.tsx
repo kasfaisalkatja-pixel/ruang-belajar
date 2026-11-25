@@ -9,10 +9,10 @@ import {
   CheckCircle2,
   ArrowRight,
   GraduationCap,
-  Rocket,
   Star,
 } from 'lucide-react';
 import { apiFetch, setToken, User } from '../lib/api';
+import { AppLogo } from '../components/AppLogo';
 
 interface Props {
   onSuccess: (user: User) => void;
@@ -91,8 +91,8 @@ export function LoginPage({ onSuccess, sessionMessage }: Props) {
               <Sparkles className="w-3.5 h-3.5 text-amber-300" /> Ruang Belajar Interaktif
             </div>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shadow-lg animate-rocket">
-                <Rocket className="w-6 h-6 text-white" />
+              <div className="animate-rocket">
+                <AppLogo className="w-14 h-14 rounded-2xl" />
               </div>
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight">Ruang Belajar</h1>

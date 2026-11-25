@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { KeyRound, Sparkles, CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Sparkles, CheckCircle2, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { apiFetch, User } from '../lib/api';
+import { AppLogo } from './AppLogo';
 
 interface Props {
   user: User;
@@ -49,8 +50,8 @@ export function ChangePasswordScreen({ user, onPasswordChanged, onLogout }: Prop
 
       <div className="relative z-10 w-full max-w-md bg-white rounded-3xl shadow-2xl border border-white/30 p-8 space-y-5 animate-scale-in">
         <div className="text-center space-y-2">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center mx-auto shadow-lg animate-rocket">
-            <KeyRound className="w-8 h-8" />
+          <div className="flex justify-center animate-rocket">
+            <AppLogo className="w-16 h-16 rounded-2xl" />
           </div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold">
             <Sparkles className="w-3.5 h-3.5" /> Login Pertama Siswa

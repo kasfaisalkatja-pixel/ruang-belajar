@@ -12,6 +12,7 @@ import {
   FileSpreadsheet,
   RotateCcw,
   Search,
+  Pencil,
 } from 'lucide-react';
 import { apiFetch, UserRole } from '../lib/api';
 import { TeacherDashboard } from './TeacherDashboard';
@@ -26,6 +27,7 @@ interface UserRow {
   identityNumber?: string | null;
   gender?: string | null;
   mustChangePassword?: number;
+  classId?: string | null;
   className?: string | null;
 }
 
@@ -86,19 +88,37 @@ export function AdminDashboard() {
   const [uGender, setUGender] = useState('Laki-laki');
   const [uClassId, setUClassId] = useState('');
 
+  // Edit User Modal
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [euName, setEuName] = useState('');
+  const [euUsername, setEuUsername] = useState('');
+  const [euIdentity, setEuIdentity] = useState('');
+  const [euGender, setEuGender] = useState('Laki-laki');
+  const [euRole, setEuRole] = useState<UserRole>('student');
+  const [euClassId, setEuClassId] = useState('');
+
   // Custom Password Modal (Guru/Admin)
   const [resetUser, setResetUser] = useState<UserRow | null>(null);
   const [newPassword, setNewPassword] = useState('');
 
-  // Form Kelas & Mapel
+  // Form Kelas & Edit Kelas Modal
   const [cName, setCName] = useState('');
   const [cYear, setCYear] = useState('2026/2027');
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
+  const [ecName, setEcName] = useState('');
+  const [ecYear, setEcYear] = useState('');
 
+  // Form Mapel & Edit Mapel Modal
   const [sName, setSName] = useState('');
   const [sDesc, setSDesc] = useState('');
   const [sClassId, setSClassId] = useState('');
   const [sTeacherId, setSTeacherId] = useState('');
+  const [editingSubject, setEditingSubject] = useState<SubjectRow | null>(null);
+  const [esName, setEsName] = useState('');
+  const [esDesc, setEsDesc] = useState('');
+  const [esClassId, setEsClassId] = useState('');
+  const [esTeacherId, setEsTeacherId] = useState('');
 
   async function loadAll() {
     try {
@@ -156,6 +176,41 @@ export function AdminDashboard() {
       loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal membuat akun');
+    }
+  }
+
+  function openEditUser(u: UserRow) {
+    setEditingUser(u);
+    setEuName(u.name);
+    setEuUsername(u.username);
+    setEuIdentity(u.identityNumber || '');
+    setEuGender(u.gender || 'Laki-laki');
+    setEuRole(u.role);
+    setEuClassId(u.classId || '');
+  }
+
+  async function handleSaveEditUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingUser) return;
+    setError('');
+    setSuccess('');
+    try {
+      await apiFetch(`/api/admin/users/${editingUser.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: euName,
+          username: euRole === 'student' ? euIdentity || euUsername : euUsername,
+          identityNumber: euIdentity,
+          gender: euRole === 'student' ? euGender : undefined,
+          role: euRole,
+          classId: euRole === 'student' ? euClassId || null : null,
+        }),
+      });
+      setEditingUser(null);
+      setSuccess('Data akun berhasil diperbarui!');
+      loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui akun');
     }
   }
 
@@ -219,6 +274,32 @@ export function AdminDashboard() {
     }
   }
 
+  function openEditClass(cls: ClassRow) {
+    setEditingClass(cls);
+    setEcName(cls.name);
+    setEcYear(cls.academicYear);
+  }
+
+  async function handleSaveEditClass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingClass) return;
+    setError('');
+    try {
+      await apiFetch(`/api/admin/classes/${editingClass.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: ecName, academicYear: ecYear }),
+      });
+      if (selectedClass?.id === editingClass.id) {
+        setSelectedClass({ ...selectedClass, name: ecName, academicYear: ecYear });
+      }
+      setEditingClass(null);
+      setSuccess('Data kelas berhasil diperbarui!');
+      loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui kelas');
+    }
+  }
+
   async function handleDeleteClass(id: string) {
     if (!confirm('Hapus kelas ini beserta mata pelajarannya?')) return;
     await apiFetch(`/api/admin/classes/${id}`, { method: 'DELETE' });
@@ -271,6 +352,36 @@ export function AdminDashboard() {
       loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal membuat mata pelajaran');
+    }
+  }
+
+  function openEditSubject(subj: SubjectRow) {
+    setEditingSubject(subj);
+    setEsName(subj.name);
+    setEsDesc(subj.description || '');
+    setEsClassId(subj.classId);
+    setEsTeacherId(subj.teacherId);
+  }
+
+  async function handleSaveEditSubject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingSubject) return;
+    setError('');
+    try {
+      await apiFetch(`/api/admin/subjects/${editingSubject.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: esName,
+          description: esDesc,
+          classId: esClassId,
+          teacherId: esTeacherId,
+        }),
+      });
+      setEditingSubject(null);
+      setSuccess('Mata pelajaran berhasil diperbarui!');
+      loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui mata pelajaran');
     }
   }
 
@@ -536,7 +647,7 @@ export function AdminDashboard() {
                     <th className="px-4 py-3">NISN / Username</th>
                     <th className="px-4 py-3">Kelas / Peran</th>
                     <th className="px-4 py-3">Status Password</th>
-                    <th className="px-4 py-3 text-right">Reset / Aksi</th>
+                    <th className="px-4 py-3 text-right">Edit / Reset / Hapus</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -581,21 +692,28 @@ export function AdminDashboard() {
                           <span className="text-[11px] text-slate-400">Aktif</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-1.5">
+                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-1">
+                        <button
+                          onClick={() => openEditUser(u)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 font-semibold text-[11px] border border-sky-200 cursor-pointer transition"
+                          title="Edit data akun"
+                        >
+                          <Pencil className="w-3 h-3" /> Edit
+                        </button>
                         {u.role === 'student' ? (
                           <button
                             onClick={() => handleResetStudentToNisn(u)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-[11px] border border-amber-200 cursor-pointer transition"
                             title="Kembalikan password siswa ke NISN awal"
                           >
-                            <RotateCcw className="w-3.5 h-3.5" /> Reset ke NISN
+                            <RotateCcw className="w-3 h-3" /> Reset ke NISN
                           </button>
                         ) : (
                           <button
                             onClick={() => setResetUser(u)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-[11px] cursor-pointer"
                           >
-                            <KeyRound className="w-3.5 h-3.5" /> Ubah Password
+                            <KeyRound className="w-3 h-3" /> Password
                           </button>
                         )}
                         <button
@@ -658,16 +776,27 @@ export function AdminDashboard() {
                     <div className="font-bold text-slate-900">{cls.name}</div>
                     <div className="text-xs text-slate-500">{cls.academicYear}</div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <span className="text-xs font-semibold bg-indigo-50 px-2.5 py-1 rounded-full text-indigo-700">
                       {cls.studentCount} siswa
                     </span>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        openEditClass(cls);
+                      }}
+                      className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
+                      title="Edit Kelas"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
                         handleDeleteClass(cls.id);
                       }}
-                      className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                      title="Hapus Kelas"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -814,12 +943,22 @@ export function AdminDashboard() {
                   <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full">
                     {s.className}
                   </span>
-                  <button
-                    onClick={() => handleDeleteSubject(s.id)}
-                    className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEditSubject(s)}
+                      className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
+                      title="Edit Mata Pelajaran"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSubject(s.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                      title="Hapus Mata Pelajaran"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <div className="font-bold text-slate-900 text-base">{s.name}</div>
                 <div className="text-xs text-slate-500">Guru Pengampu: {s.teacherName}</div>
@@ -827,6 +966,249 @@ export function AdminDashboard() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Modal Edit Akun Pengguna */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <form
+            onSubmit={handleSaveEditUser}
+            className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl"
+          >
+            <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-indigo-600" /> Edit Akun Pengguna
+            </h3>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Peran Akun</label>
+              <select
+                value={euRole}
+                onChange={(e) => setEuRole(e.target.value as UserRole)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm bg-slate-50 font-semibold"
+              >
+                <option value="student">Siswa</option>
+                <option value="teacher">Guru</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap</label>
+              <input
+                required
+                value={euName}
+                onChange={(e) => setEuName(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            {euRole === 'student' ? (
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">NISN Siswa</label>
+                  <input
+                    required
+                    value={euIdentity}
+                    onChange={(e) => setEuIdentity(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Jenis Kelamin
+                  </label>
+                  <select
+                    value={euGender}
+                    onChange={(e) => setEuGender(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                  >
+                    <option value="Laki-laki">Laki-laki</option>
+                    <option value="Perempuan">Perempuan</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Kelas Siswa</label>
+                  <select
+                    value={euClassId}
+                    onChange={(e) => setEuClassId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                  >
+                    <option value="">-- Tanpa Kelas --</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.academicYear})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Username</label>
+                  <input
+                    required
+                    value={euUsername}
+                    onChange={(e) => setEuUsername(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    NIP (Opsional)
+                  </label>
+                  <input
+                    value={euIdentity}
+                    onChange={(e) => setEuIdentity(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingUser(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer"
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal Edit Kelas */}
+      {editingClass && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <form
+            onSubmit={handleSaveEditClass}
+            className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl"
+          >
+            <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-indigo-600" /> Edit Kelas
+            </h3>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Nama Kelas</label>
+              <input
+                required
+                value={ecName}
+                onChange={(e) => setEcName(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Tahun Ajaran</label>
+              <input
+                required
+                value={ecYear}
+                onChange={(e) => setEcYear(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingClass(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer"
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal Edit Mata Pelajaran */}
+      {editingSubject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <form
+            onSubmit={handleSaveEditSubject}
+            className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl"
+          >
+            <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-indigo-600" /> Edit Mata Pelajaran
+            </h3>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Nama Mata Pelajaran
+              </label>
+              <input
+                required
+                value={esName}
+                onChange={(e) => setEsName(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Deskripsi</label>
+              <textarea
+                rows={2}
+                value={esDesc}
+                onChange={(e) => setEsDesc(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Kelas</label>
+              <select
+                required
+                value={esClassId}
+                onChange={(e) => setEsClassId(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              >
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.academicYear})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Guru Pengampu</label>
+              <select
+                required
+                value={esTeacherId}
+                onChange={(e) => setEsTeacherId(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              >
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.role === 'admin' ? 'Admin' : 'Guru'})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingSubject(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer"
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

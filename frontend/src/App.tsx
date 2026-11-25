@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Rocket, LogOut } from 'lucide-react';
+import { LogOut, Download } from 'lucide-react';
 import { apiFetch, getToken, setToken, User } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { TeacherDashboard } from './pages/TeacherDashboard';
 import { StudentDashboard } from './pages/StudentDashboard';
 import { ChangePasswordScreen } from './components/ChangePasswordScreen';
+import { AppLogo, downloadApkLogoPng } from './components/AppLogo';
 
 const ROLE_LABEL: Record<User['role'], string> = {
   admin: 'Admin / Operator Sekolah',
@@ -52,8 +53,8 @@ export function App() {
   if (checking) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-indigo-50 via-white to-violet-50 text-slate-700">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center animate-rocket shadow-xl">
-          <Rocket className="w-7 h-7" />
+        <div className="animate-rocket">
+          <AppLogo className="w-16 h-16 rounded-2xl" />
         </div>
         <span className="text-sm font-bold">Menyiapkan Ruang Belajar...</span>
       </div>
@@ -97,10 +98,10 @@ export function App() {
       <div className="pointer-events-none fixed bottom-10 -right-24 h-80 w-80 rounded-full bg-fuchsia-400/10 blur-3xl animate-float-reverse" />
 
       <header className="bg-white/85 backdrop-blur-md border-b border-indigo-100 sticky top-0 z-20 shadow-xs">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 animate-rocket">
-              <Rocket className="w-5 h-5" />
+            <div className="animate-rocket">
+              <AppLogo className="w-10 h-10 rounded-xl" />
             </div>
             <div>
               <div className="font-extrabold text-slate-900 leading-tight tracking-tight flex items-center gap-2">
@@ -115,7 +116,17 @@ export function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {user.role === 'admin' && (
+              <button
+                onClick={() => downloadApkLogoPng(1024)}
+                className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition cursor-pointer"
+                title="Unduh Logo PNG 1024x1024 siap pakai untuk dijadikan ikon .APK"
+              >
+                <Download className="w-3.5 h-3.5" /> Unduh Logo APK
+              </button>
+            )}
+
             <div className="hidden sm:flex items-center gap-2.5 bg-indigo-50/70 border border-indigo-100 px-3 py-1.5 rounded-xl">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white text-xs font-bold flex items-center justify-center">
                 {initials}

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgMain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3730a3" />
+      <stop offset="48%" stop-color="#6d28d9" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="shineTop" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+    <linearGradient id="bookLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e0e7ff" />
+    </linearGradient>
+    <linearGradient id="bookRight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#dbeafe" />
+    </linearGradient>
+    <linearGradient id="goldRocket" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="45%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#ea580c" />
+    </linearGradient>
+    <filter id="dropGlow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#1e1b4b" flood-opacity="0.42" />
+    </filter>
+  </defs>
+
+  <!-- Full-bleed rounded Android/iOS icon base -->
+  <rect width="512" height="512" rx="116" fill="url(#bgMain)" />
+  <path d="M0 116 C0 52, 52 0, 116 0 L396 0 C460 0, 512 52, 512 116 L512 230 C360 275, 152 275, 0 230 Z" fill="url(#shineTop)" />
+
+  <!-- Ambient sparkles -->
+  <circle cx="106" cy="126" r="10" fill="#bae6fd" opacity="0.85" />
+  <circle cx="412" cy="148" r="7" fill="#fde047" opacity="0.9" />
+  <path d="M396 92 L403 110 L421 117 L403 124 L396 142 L389 124 L371 117 L389 110 Z" fill="#fef08a" />
+  <path d="M118 178 L122 189 L133 193 L122 197 L118 208 L114 197 L103 193 L114 189 Z" fill="#e0f2fe" />
+
+  <!-- Open 3D Book -->
+  <g filter="url(#dropGlow)">
+    <!-- Book Cover Back -->
+    <path d="M84 246 C146 226, 212 242, 256 270 C300 242, 366 226, 428 246 L428 398 C366 378, 300 394, 256 422 C212 394, 146 378, 84 398 Z" fill="#312e81" opacity="0.55" />
+    <!-- Left Page -->
+    <path d="M96 232 C154 210, 214 226, 256 256 L256 404 C214 374, 154 358, 96 380 Z" fill="url(#bookLeft)" />
+    <!-- Right Page -->
+    <path d="M416 232 C358 210, 298 226, 256 256 L256 404 C298 374, 358 358, 416 380 Z" fill="url(#bookRight)" />
+    <!-- Page Lines Left -->
+    <path d="M128 274 C166 264, 202 272, 230 288" stroke="#818cf8" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+    <path d="M128 308 C166 298, 202 306, 230 322" stroke="#818cf8" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+    <path d="M128 342 C166 332, 202 340, 230 356" stroke="#818cf8" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+    <!-- Page Lines Right -->
+    <path d="M384 274 C346 264, 310 272, 282 288" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+    <path d="M384 308 C346 298, 310 306, 282 322" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+    <path d="M384 342 C346 332, 310 340, 282 356" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.65" />
+  </g>
+
+  <!-- Rising Rocket Emblem from Book Spine -->
+  <g filter="url(#dropGlow)">
+    <!-- Rocket Flame -->
+    <path d="M236 244 L256 292 L276 244 Z" fill="#fb7185" />
+    <path d="M244 244 L256 274 L268 244 Z" fill="#fef08a" />
+    <!-- Rocket Fins -->
+    <path d="M216 206 L184 244 L222 238 Z" fill="#f59e0b" />
+    <path d="M296 206 L328 244 L290 238 Z" fill="#f59e0b" />
+    <!-- Rocket Body -->
+    <path d="M256 76 C296 122, 306 182, 296 244 L216 244 C206 182, 216 122, 256 76 Z" fill="url(#goldRocket)" />
+    <!-- Rocket Window -->
+    <circle cx="256" cy="166" r="24" fill="#ffffff" />
+    <circle cx="256" cy="166" r="16" fill="#4f46e5" />
+    <circle cx="250" cy="160" r="5" fill="#bae6fd" />
+  </g>
+</svg>

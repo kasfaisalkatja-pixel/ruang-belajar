@@ -14,6 +14,7 @@ import {
   Clock,
   Rocket,
   Star,
+  Pencil,
 } from 'lucide-react';
 import { apiFetch, downloadProtectedFile, getFileBadgeMeta } from '../lib/api';
 import { FileDropzone } from '../components/FileDropzone';
@@ -100,12 +101,29 @@ export function TeacherDashboard({ showBanner = true }: Props) {
   const [mVideo, setMVideo] = useState('');
   const [mFile, setMFile] = useState<File | null>(null);
 
+  // Edit Materi Modal
+  const [editingMaterial, setEditingMaterial] = useState<MaterialItem | null>(null);
+  const [emTitle, setEmTitle] = useState('');
+  const [emContent, setEmContent] = useState('');
+  const [emVideo, setEmVideo] = useState('');
+  const [emFile, setEmFile] = useState<File | null>(null);
+  const [emRemoveFile, setEmRemoveFile] = useState(false);
+
   // Form Buat Tugas (PDF / Word)
   const [aTitle, setATitle] = useState('');
   const [aDesc, setADesc] = useState('');
   const [aDue, setADue] = useState('');
   const [aMax, setAMax] = useState(100);
   const [aFile, setAFile] = useState<File | null>(null);
+
+  // Edit Tugas Modal
+  const [editingAssignment, setEditingAssignment] = useState<AssignmentItem | null>(null);
+  const [eaTitle, setEaTitle] = useState('');
+  const [eaDesc, setEaDesc] = useState('');
+  const [eaDue, setEaDue] = useState('');
+  const [eaMax, setEaMax] = useState(100);
+  const [eaFile, setEaFile] = useState<File | null>(null);
+  const [eaRemoveFile, setEaRemoveFile] = useState(false);
 
   // Modals & Detail Views
   const [previewFile, setPreviewFile] = useState<{ key: string; name?: string | null } | null>(
@@ -191,6 +209,43 @@ export function TeacherDashboard({ showBanner = true }: Props) {
     }
   }
 
+  function openEditMaterial(mat: MaterialItem) {
+    setEditingMaterial(mat);
+    setEmTitle(mat.title);
+    setEmContent(mat.content);
+    setEmVideo(mat.videoUrl || '');
+    setEmFile(null);
+    setEmRemoveFile(false);
+  }
+
+  async function handleSaveEditMaterial(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingMaterial) return;
+    setError('');
+    setSuccess('');
+    setSending(true);
+    try {
+      const fd = new FormData();
+      fd.append('title', emTitle);
+      fd.append('content', emContent);
+      if (emVideo) fd.append('videoUrl', emVideo);
+      if (emRemoveFile) fd.append('removeFile', '1');
+      if (emFile) fd.append('file', emFile);
+
+      await apiFetch(`/api/learning/materials/${editingMaterial.id}`, {
+        method: 'PUT',
+        body: fd,
+      });
+      setEditingMaterial(null);
+      setSuccess('Materi berhasil diperbarui!');
+      loadSubjectDetail(selectedSubjectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui materi');
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleDeleteMaterial(id: string) {
     if (!confirm('Hapus materi ini?')) return;
     await apiFetch(`/api/learning/materials/${id}`, { method: 'DELETE' });
@@ -232,6 +287,45 @@ export function TeacherDashboard({ showBanner = true }: Props) {
       loadDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal mengirim tugas');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function openEditAssignment(asg: AssignmentItem) {
+    setEditingAssignment(asg);
+    setEaTitle(asg.title);
+    setEaDesc(asg.description);
+    setEaDue(asg.dueDate.slice(0, 16));
+    setEaMax(asg.maxScore);
+    setEaFile(null);
+    setEaRemoveFile(false);
+  }
+
+  async function handleSaveEditAssignment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingAssignment) return;
+    setError('');
+    setSuccess('');
+    setSending(true);
+    try {
+      const fd = new FormData();
+      fd.append('title', eaTitle);
+      fd.append('description', eaDesc);
+      fd.append('dueDate', eaDue);
+      fd.append('maxScore', String(eaMax));
+      if (eaRemoveFile) fd.append('removeFile', '1');
+      if (eaFile) fd.append('file', eaFile);
+
+      await apiFetch(`/api/learning/assignments/${editingAssignment.id}`, {
+        method: 'PUT',
+        body: fd,
+      });
+      setEditingAssignment(null);
+      setSuccess('Tugas berhasil diperbarui!');
+      loadSubjectDetail(selectedSubjectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memperbarui tugas');
     } finally {
       setSending(false);
     }
@@ -523,12 +617,19 @@ export function TeacherDashboard({ showBanner = true }: Props) {
                           Dikirim {new Date(m.createdAt).toLocaleString('id-ID')}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           onClick={() => handleViewReads(m)}
                           className="inline-flex items-center gap-1 text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1 rounded-full cursor-pointer"
                         >
-                          <Users className="w-3.5 h-3.5" /> {m.readCount}/{totalStudents} Siswa Baca
+                          <Users className="w-3.5 h-3.5" /> {m.readCount}/{totalStudents} Baca
+                        </button>
+                        <button
+                          onClick={() => openEditMaterial(m)}
+                          className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
+                          title="Edit materi"
+                        >
+                          <Pencil className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDeleteMaterial(m.id)}
@@ -694,13 +795,20 @@ export function TeacherDashboard({ showBanner = true }: Props) {
                           {new Date(a.dueDate).toLocaleString('id-ID')}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => openGrading(a)}
                           className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs cursor-pointer"
                         >
                           <Award className="w-3.5 h-3.5" /> Periksa & Nilai ({a.submissionCount}/
                           {totalStudents})
+                        </button>
+                        <button
+                          onClick={() => openEditAssignment(a)}
+                          className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg cursor-pointer"
+                          title="Edit tugas"
+                        >
+                          <Pencil className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDeleteAssignment(a.id)}
@@ -895,6 +1003,192 @@ export function TeacherDashboard({ showBanner = true }: Props) {
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Modal Edit Materi */}
+      {editingMaterial && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSaveEditMaterial}
+            className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl my-8"
+          >
+            <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-indigo-600" /> Edit Materi Pembelajaran
+            </h3>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Judul Materi</label>
+              <input
+                required
+                value={emTitle}
+                onChange={(e) => setEmTitle(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Ringkasan / Penjelasan Materi
+              </label>
+              <textarea
+                required
+                rows={4}
+                value={emContent}
+                onChange={(e) => setEmContent(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            {editingMaterial.fileName && !emRemoveFile && !emFile && (
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <span className="font-semibold text-slate-700 truncate">
+                  File saat ini: {editingMaterial.fileName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setEmRemoveFile(true)}
+                  className="text-rose-600 hover:underline font-bold shrink-0 ml-2 cursor-pointer"
+                >
+                  Hapus File
+                </button>
+              </div>
+            )}
+
+            <FileDropzone
+              file={emFile}
+              onChange={setEmFile}
+              label="Ganti / Unggah File Modul Baru (Opsional)"
+            />
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Tautan Video / Google Drive (Opsional)
+              </label>
+              <input
+                value={emVideo}
+                onChange={(e) => setEmVideo(e.target.value)}
+                placeholder="https://youtube.com/..."
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingMaterial(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={sending}
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer"
+              >
+                {sending ? 'Menyimpan...' : 'Simpan Perubahan'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal Edit Tugas */}
+      {editingAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSaveEditAssignment}
+            className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl my-8"
+          >
+            <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-indigo-600" /> Edit Tugas Siswa
+            </h3>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Judul Tugas</label>
+              <input
+                required
+                value={eaTitle}
+                onChange={(e) => setEaTitle(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Instruksi Pengerjaan
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={eaDesc}
+                onChange={(e) => setEaDesc(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Batas Waktu</label>
+                <input
+                  required
+                  type="datetime-local"
+                  value={eaDue}
+                  onChange={(e) => setEaDue(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Nilai Maksimal
+                </label>
+                <input
+                  type="number"
+                  value={eaMax}
+                  onChange={(e) => setEaMax(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm"
+                />
+              </div>
+            </div>
+
+            {editingAssignment.fileName && !eaRemoveFile && !eaFile && (
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <span className="font-semibold text-slate-700 truncate">
+                  File soal saat ini: {editingAssignment.fileName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setEaRemoveFile(true)}
+                  className="text-rose-600 hover:underline font-bold shrink-0 ml-2 cursor-pointer"
+                >
+                  Hapus File
+                </button>
+              </div>
+            )}
+
+            <FileDropzone
+              file={eaFile}
+              onChange={setEaFile}
+              label="Ganti / Unggah File Soal Baru (Opsional)"
+            />
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingAssignment(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={sending}
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer"
+              >
+                {sending ? 'Menyimpan...' : 'Simpan Perubahan'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

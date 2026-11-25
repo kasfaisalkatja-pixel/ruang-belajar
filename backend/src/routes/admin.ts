@@ -50,7 +50,9 @@ adminRoutes.get('/users', async (c) => {
   const allMembers = await db.select().from(classMembers);
   const classNameMap = new Map(allClasses.map((cl) => [cl.id, cl.name]));
   const studentClassMap = new Map<string, string>();
+  const studentClassIdMap = new Map<string, string>();
   for (const m of allMembers) {
+    studentClassIdMap.set(m.studentId, m.classId);
     const cName = classNameMap.get(m.classId);
     if (cName) studentClassMap.set(m.studentId, cName);
   }
@@ -73,6 +75,7 @@ adminRoutes.get('/users', async (c) => {
   return c.json({
     users: rows.map((u) => ({
       ...u,
+      classId: studentClassIdMap.get(u.id) || null,
       className: studentClassMap.get(u.id) || null,
     })),
   });
@@ -287,16 +290,43 @@ adminRoutes.patch('/users/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json<{
     name?: string;
+    username?: string;
     password?: string;
+    role?: UserRole;
     identityNumber?: string;
     gender?: string;
+    classId?: string | null;
   }>();
 
   const db = drizzle(c.env.DB);
+  const [current] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  if (!current) {
+    return c.json({ error: 'Pengguna tidak ditemukan' }, 404);
+  }
+
   const updates: Record<string, unknown> = {};
   if (body.name?.trim()) updates.name = body.name.trim();
-  if (body.identityNumber !== undefined) updates.identityNumber = body.identityNumber.trim() || null;
-  if (body.gender !== undefined) updates.gender = body.gender.trim() || null;
+  if (body.role) updates.role = body.role;
+  if (body.identityNumber !== undefined) {
+    updates.identityNumber = body.identityNumber.trim() || null;
+  }
+  if (body.gender !== undefined) {
+    updates.gender = body.gender.trim() || null;
+  }
+
+  const nextUsername = body.username?.trim().toLowerCase();
+  if (nextUsername && nextUsername !== current.username) {
+    const dup = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.username, nextUsername))
+      .limit(1);
+    if (dup.length > 0 && dup[0].id !== id) {
+      return c.json({ error: 'Username / NISN tersebut sudah dipakai akun lain' }, 409);
+    }
+    updates.username = nextUsername;
+  }
+
   if (body.password?.trim()) {
     updates.passwordHash = await hashPassword(body.password.trim());
     updates.mustChangePassword = 0;
@@ -305,6 +335,19 @@ adminRoutes.patch('/users/:id', async (c) => {
   if (Object.keys(updates).length > 0) {
     await db.update(users).set(updates).where(eq(users.id, id));
   }
+
+  if (body.classId !== undefined) {
+    await db.delete(classMembers).where(eq(classMembers.studentId, id));
+    if (body.classId) {
+      await db.insert(classMembers).values({
+        id: generateId(),
+        classId: body.classId,
+        studentId: id,
+        joinedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   return c.json({ message: 'Data pengguna berhasil diperbarui' });
 });
 
@@ -353,6 +396,23 @@ adminRoutes.post('/classes', async (c) => {
     { class: { id, name: body.name.trim(), academicYear: body.academicYear.trim(), createdAt } },
     201
   );
+});
+
+adminRoutes.patch('/classes/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ name?: string; academicYear?: string }>();
+  if (!body.name?.trim() || !body.academicYear?.trim()) {
+    return c.json({ error: 'Nama kelas dan tahun ajaran wajib diisi' }, 400);
+  }
+  const db = drizzle(c.env.DB);
+  await db
+    .update(classes)
+    .set({
+      name: body.name.trim(),
+      academicYear: body.academicYear.trim(),
+    })
+    .where(eq(classes.id, id));
+  return c.json({ message: 'Data kelas berhasil diperbarui' });
 });
 
 adminRoutes.delete('/classes/:id', async (c) => {
@@ -472,6 +532,33 @@ adminRoutes.post('/subjects', async (c) => {
   });
 
   return c.json({ id, message: 'Mata pelajaran berhasil dibuat' }, 201);
+});
+
+adminRoutes.patch('/subjects/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{
+    name?: string;
+    description?: string;
+    classId?: string;
+    teacherId?: string;
+  }>();
+
+  if (!body.name?.trim() || !body.classId || !body.teacherId) {
+    return c.json({ error: 'Nama mapel, kelas, dan guru pengampu wajib diisi' }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  await db
+    .update(subjects)
+    .set({
+      name: body.name.trim(),
+      description: body.description?.trim() || null,
+      classId: body.classId,
+      teacherId: body.teacherId,
+    })
+    .where(eq(subjects.id, id));
+
+  return c.json({ message: 'Mata pelajaran berhasil diperbarui' });
 });
 
 adminRoutes.delete('/subjects/:id', async (c) => {

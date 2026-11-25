@@ -383,6 +383,65 @@ learningRoutes.post(
   }
 );
 
+learningRoutes.put('/materials/:materialId', requireRole('teacher', 'admin'), async (c) => {
+  const materialId = c.req.param('materialId');
+  const db = drizzle(c.env.DB);
+
+  const [existing] = await db
+    .select()
+    .from(materials)
+    .where(eq(materials.id, materialId))
+    .limit(1);
+
+  if (!existing) {
+    return c.json({ error: 'Materi tidak ditemukan' }, 404);
+  }
+
+  const formData = await c.req.formData();
+  const title = String(formData.get('title') ?? '').trim();
+  const content = String(formData.get('content') ?? '').trim();
+  const videoUrl = String(formData.get('videoUrl') ?? '').trim() || null;
+  const removeFile = formData.get('removeFile') === '1';
+  const file = formData.get('file');
+
+  if (!title || !content) {
+    return c.json({ error: 'Judul dan isi materi wajib diisi' }, 400);
+  }
+
+  let fileKey = existing.fileKey;
+  let fileName = existing.fileName;
+
+  if (file instanceof File && file.size > 0) {
+    try {
+      const uploaded = await saveFileToD1(c.env.DB, db, file);
+      if (existing.fileKey) {
+        await db.delete(files).where(eq(files.id, existing.fileKey));
+      }
+      fileKey = uploaded.fileKey;
+      fileName = uploaded.fileName;
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    }
+  } else if (removeFile && existing.fileKey) {
+    await db.delete(files).where(eq(files.id, existing.fileKey));
+    fileKey = null;
+    fileName = null;
+  }
+
+  await db
+    .update(materials)
+    .set({
+      title,
+      content,
+      videoUrl,
+      fileKey,
+      fileName,
+    })
+    .where(eq(materials.id, materialId));
+
+  return c.json({ message: 'Materi berhasil diperbarui!' });
+});
+
 learningRoutes.delete('/materials/:materialId', requireRole('teacher', 'admin'), async (c) => {
   const materialId = c.req.param('materialId');
   const db = drizzle(c.env.DB);
@@ -509,6 +568,67 @@ learningRoutes.post(
     return c.json({ id, message: 'Tugas berhasil dikirim ke akun seluruh siswa di kelas!' }, 201);
   }
 );
+
+learningRoutes.put('/assignments/:assignmentId', requireRole('teacher', 'admin'), async (c) => {
+  const assignmentId = c.req.param('assignmentId');
+  const db = drizzle(c.env.DB);
+
+  const [existing] = await db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.id, assignmentId))
+    .limit(1);
+
+  if (!existing) {
+    return c.json({ error: 'Tugas tidak ditemukan' }, 404);
+  }
+
+  const formData = await c.req.formData();
+  const title = String(formData.get('title') ?? '').trim();
+  const description = String(formData.get('description') ?? '').trim();
+  const dueDate = String(formData.get('dueDate') ?? '').trim();
+  const maxScore = Number(formData.get('maxScore') ?? existing.maxScore) || 100;
+  const removeFile = formData.get('removeFile') === '1';
+  const file = formData.get('file');
+
+  if (!title || !description || !dueDate) {
+    return c.json({ error: 'Judul, instruksi, dan tenggat waktu wajib diisi' }, 400);
+  }
+
+  let fileKey = existing.fileKey;
+  let fileName = existing.fileName;
+
+  if (file instanceof File && file.size > 0) {
+    try {
+      const uploaded = await saveFileToD1(c.env.DB, db, file);
+      if (existing.fileKey) {
+        await db.delete(files).where(eq(files.id, existing.fileKey));
+      }
+      fileKey = uploaded.fileKey;
+      fileName = uploaded.fileName;
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    }
+  } else if (removeFile && existing.fileKey) {
+    await db.delete(files).where(eq(files.id, existing.fileKey));
+    fileKey = null;
+    fileName = null;
+  }
+
+  await db
+    .update(assignments)
+    .set({
+      title,
+      description,
+      dueDate,
+      maxScore,
+      fileKey,
+      fileName,
+    })
+    .where(eq(assignments.id, assignmentId));
+
+  return c.json({ message: 'Tugas berhasil diperbarui!' });
+});
 
 learningRoutes.delete('/assignments/:assignmentId', requireRole('teacher', 'admin'), async (c) => {
   const assignmentId = c.req.param('assignmentId');
