@@ -9,7 +9,7 @@ CORS_ORIGIN = "http://localhost:5173"
 [[d1_databases]]
 binding = "DB"
 database_name = "ruang_belajar_db"
-database_id = "GANTI_DENGAN_DATABASE_ID_DARI_CLOUDFLARE"
+database_id = "a4c998ae-427f-4a66-9dc3-1428e536fb90"
 migrations_dir = "drizzle"
 
 [[r2_buckets]]
