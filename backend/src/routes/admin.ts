@@ -365,6 +365,25 @@ adminRoutes.patch('/users/:id', async (c) => {
   return c.json({ message: 'Data pengguna berhasil diperbarui' });
 });
 
+adminRoutes.delete('/students/all', async (c) => {
+  const classId = c.req.query('classId');
+  const db = drizzle(c.env.DB);
+
+  if (classId) {
+    const members = await db
+      .select({ studentId: classMembers.studentId })
+      .from(classMembers)
+      .where(eq(classMembers.classId, classId));
+    for (const m of members) {
+      await db.delete(users).where(and(eq(users.id, m.studentId), eq(users.role, 'student')));
+    }
+    return c.json({ message: `Seluruh akun siswa di kelas terpilih berhasil dihapus (${members.length} siswa).` });
+  }
+
+  await db.delete(users).where(eq(users.role, 'student'));
+  return c.json({ message: 'Seluruh akun siswa berhasil dibersihkan. Akun Admin & Guru tetap aman.' });
+});
+
 adminRoutes.delete('/users/:id', async (c) => {
   const id = c.req.param('id');
   const currentUser = c.get('user');

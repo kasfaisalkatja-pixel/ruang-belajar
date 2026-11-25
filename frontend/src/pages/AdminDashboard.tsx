@@ -258,6 +258,27 @@ export function AdminDashboard() {
     }
   }
 
+  async function handleClearAllStudents() {
+    if (
+      !confirm(
+        'Hapus SEMUA akun Siswa saat ini agar bisa diimpor ulang dengan bersih? (Akun Admin & Guru tetap aman tidak terhapus)'
+      )
+    ) {
+      return;
+    }
+    setError('');
+    setSuccess('');
+    try {
+      const res = await apiFetch<{ message: string }>('/api/admin/students/all', {
+        method: 'DELETE',
+      });
+      setSuccess(res.message);
+      loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal membersihkan data siswa');
+    }
+  }
+
   async function handleCreateClass(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -636,6 +657,16 @@ export function AdminDashboard() {
                   <option value="teacher">Guru</option>
                   <option value="admin">Admin</option>
                 </select>
+                {students.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllStudents}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold cursor-pointer transition"
+                    title="Bersihkan seluruh akun siswa untuk diimpor ulang"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Hapus Semua Siswa
+                  </button>
+                )}
               </div>
             </div>
 
