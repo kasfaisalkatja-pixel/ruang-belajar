@@ -1,3 +1,11 @@
+CREATE TABLE IF NOT EXISTS `files` (
+  `id` text PRIMARY KEY NOT NULL,
+  `name` text NOT NULL,
+  `content_type` text NOT NULL,
+  `data_base64` text NOT NULL,
+  `created_at` text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `users` (
   `id` text PRIMARY KEY NOT NULL,
   `name` text NOT NULL,

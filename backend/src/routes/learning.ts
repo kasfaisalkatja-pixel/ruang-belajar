@@ -5,6 +5,7 @@ import {
   assignments,
   classMembers,
   classes,
+  files,
   materialReads,
   materials,
   subjects,
@@ -19,14 +20,42 @@ export const learningRoutes = new Hono<{ Bindings: Bindings; Variables: Variable
 
 learningRoutes.use('*', requireAuth);
 
-/** Upload helper for Cloudflare R2 */
-async function uploadToR2(bucket: R2Bucket, folder: string, file: File) {
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const key = `${folder}/${generateId()}-${safeName}`;
-  await bucket.put(key, await file.arrayBuffer(), {
-    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+const MAX_FILE_BYTES = 1024 * 1024; // 1 MB (batas aman untuk Cloudflare D1)
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/** Upload helper storing small files directly in Cloudflare D1 (no R2 needed) */
+async function saveFileToD1(db: ReturnType<typeof drizzle>, file: File) {
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error('Ukuran file maksimal 1 MB. Untuk file besar, gunakan tautan Google Drive/YouTube.');
+  }
+  const id = generateId();
+  const dataBase64 = arrayBufferToBase64(await file.arrayBuffer());
+  await db.insert(files).values({
+    id,
+    name: file.name,
+    contentType: file.type || 'application/octet-stream',
+    dataBase64,
+    createdAt: new Date().toISOString(),
   });
-  return { fileKey: key, fileName: file.name };
+  return { fileKey: id, fileName: file.name };
 }
 
 learningRoutes.get('/dashboard', async (c) => {
@@ -235,9 +264,13 @@ learningRoutes.post('/subjects/:subjectId/materials', requireRole('teacher'), as
   let fileKey: string | null = null;
   let fileName: string | null = null;
   if (file instanceof File && file.size > 0) {
-    const uploaded = await uploadToR2(c.env.BUCKET, `materials/${subjectId}`, file);
-    fileKey = uploaded.fileKey;
-    fileName = uploaded.fileName;
+    try {
+      const uploaded = await saveFileToD1(db, file);
+      fileKey = uploaded.fileKey;
+      fileName = uploaded.fileName;
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    }
   }
 
   const id = generateId();
@@ -339,9 +372,13 @@ learningRoutes.post('/subjects/:subjectId/assignments', requireRole('teacher'), 
   let fileKey: string | null = null;
   let fileName: string | null = null;
   if (file instanceof File && file.size > 0) {
-    const uploaded = await uploadToR2(c.env.BUCKET, `assignments/${subjectId}`, file);
-    fileKey = uploaded.fileKey;
-    fileName = uploaded.fileName;
+    try {
+      const uploaded = await saveFileToD1(db, file);
+      fileKey = uploaded.fileKey;
+      fileName = uploaded.fileName;
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    }
   }
 
   const id = generateId();
@@ -376,9 +413,13 @@ learningRoutes.post('/assignments/:assignmentId/submit', requireRole('student'),
   let fileKey: string | null = null;
   let fileName: string | null = null;
   if (file instanceof File && file.size > 0) {
-    const uploaded = await uploadToR2(c.env.BUCKET, `submissions/${assignmentId}`, file);
-    fileKey = uploaded.fileKey;
-    fileName = uploaded.fileName;
+    try {
+      const uploaded = await saveFileToD1(db, file);
+      fileKey = uploaded.fileKey;
+      fileName = uploaded.fileName;
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    }
   }
 
   const [existing] = await db
@@ -480,13 +521,17 @@ learningRoutes.patch('/submissions/:submissionId/grade', requireRole('teacher'),
 
 learningRoutes.get('/files/:key{.+}', async (c) => {
   const key = c.req.param('key');
-  const obj = await c.env.BUCKET.get(key);
-  if (!obj) {
+  const db = drizzle(c.env.DB);
+  const [fileRow] = await db.select().from(files).where(eq(files.id, key)).limit(1);
+  if (!fileRow) {
     return c.json({ error: 'File tidak ditemukan' }, 404);
   }
 
-  const headers = new Headers();
-  obj.writeHttpMetadata(headers);
-  headers.set('etag', obj.httpEtag);
-  return new Response(obj.body, { headers });
+  const bytes = base64ToUint8Array(fileRow.dataBase64);
+  return new Response(bytes, {
+    headers: {
+      'Content-Type': fileRow.contentType,
+      'Content-Disposition': `attachment; filename="${fileRow.name.replace(/"/g, '_')}"`,
+    },
+  });
 });

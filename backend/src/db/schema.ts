@@ -1,5 +1,13 @@
 import { sqliteTable, text, integer, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
+export const files = sqliteTable('files', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  contentType: text('content_type').notNull(),
+  dataBase64: text('data_base64').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

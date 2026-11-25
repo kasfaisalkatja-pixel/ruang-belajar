@@ -10,7 +10,6 @@ export interface AuthUser {
 
 export interface Bindings {
   DB: D1Database;
-  BUCKET: R2Bucket;
   JWT_SECRET: string;
   CORS_ORIGIN: string;
 }

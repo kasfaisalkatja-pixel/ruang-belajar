@@ -37,12 +37,11 @@ Frontend akan berjalan di `http://localhost:5173` (otomatis terhubung ke backend
 
 ## 2. Deployment ke Cloudflare
 
-### A. Siapkan Database D1 & Storage R2
+### A. Siapkan Database D1
 ```bash
 cd backend
 npx wrangler login
 npx wrangler d1 create ruang_belajar_db
-npx wrangler r2 bucket create ruang-belajar-files
 ```
 Salin `database_id` hasil perintah `d1 create` ke dalam `backend/wrangler.toml`.
 
