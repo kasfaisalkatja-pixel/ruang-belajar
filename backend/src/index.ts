@@ -11,8 +11,17 @@ app.use(
   '/api/*',
   cors({
     origin: (origin, c) => {
-      const allowed = c.env.CORS_ORIGIN || 'http://localhost:5173';
-      return origin === allowed ? origin : allowed;
+      if (!origin) return c.env.CORS_ORIGIN || '*';
+      const configured = (c.env.CORS_ORIGIN || '').replace(/\/$/, '');
+      if (
+        configured === '*' ||
+        origin === configured ||
+        origin.startsWith('http://localhost:') ||
+        origin.endsWith('.pages.dev')
+      ) {
+        return origin;
+      }
+      return configured || origin;
     },
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],

@@ -7,14 +7,17 @@ export const requireAuth = createMiddleware<{
   Variables: Variables;
 }>(async (c, next) => {
   const authHeader = c.req.header('Authorization');
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const queryToken = c.req.query('token');
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : queryToken || null;
 
   if (!token) {
     return c.json({ error: 'Token autentikasi tidak ditemukan' }, 401);
   }
 
   try {
-    const payload = await verify(token, c.env.JWT_SECRET);
+    const payload = await verify(token, c.env.JWT_SECRET, 'HS256');
     const user: AuthUser = {
       id: String(payload.sub),
       name: String(payload.name),
@@ -25,7 +28,7 @@ export const requireAuth = createMiddleware<{
     c.set('user', user);
     await next();
   } catch {
-    return c.json({ error: 'Sesi tidak valid atau telah berakhir' }, 401);
+    return c.json({ error: 'Sesi tidak valid atau telah berakhir. Silakan keluar lalu masuk kembali.' }, 401);
   }
 });
 

@@ -9,6 +9,12 @@ import type { Bindings, Variables } from '../types';
 
 export const authRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+authRoutes.get('/status', async (c) => {
+  const db = drizzle(c.env.DB);
+  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(users);
+  return c.json({ initialized: count > 0 });
+});
+
 authRoutes.post('/setup', async (c) => {
   const db = drizzle(c.env.DB);
   const [{ count }] = await db
@@ -16,7 +22,7 @@ authRoutes.post('/setup', async (c) => {
     .from(users);
 
   if (count > 0) {
-    return c.json({ error: 'Setup awal sudah pernah dilakukan' }, 400);
+    return c.json({ error: 'Setup awal sudah pernah dilakukan. Silakan masuk menggunakan akun Admin Anda.' }, 400);
   }
 
   const body = await c.req.json<{ name: string; username: string; password: string }>();
@@ -27,18 +33,19 @@ authRoutes.post('/setup', async (c) => {
   const id = generateId();
   const passwordHash = await hashPassword(body.password);
   const createdAt = new Date().toISOString();
+  const normalizedUsername = body.username.trim().toLowerCase();
 
   await db.insert(users).values({
     id,
     name: body.name.trim(),
-    username: body.username.trim().toLowerCase(),
+    username: normalizedUsername,
     passwordHash,
     role: 'admin',
     identityNumber: 'ADMIN-01',
     createdAt,
   });
 
-  return c.json({ message: 'Akun admin awal berhasil dibuat', username: body.username.trim().toLowerCase() }, 201);
+  return c.json({ message: 'Akun admin awal berhasil dibuat', username: normalizedUsername }, 201);
 });
 
 authRoutes.post('/login', async (c) => {
@@ -68,7 +75,8 @@ authRoutes.post('/login', async (c) => {
       identityNumber: user.identityNumber,
       exp,
     },
-    c.env.JWT_SECRET
+    c.env.JWT_SECRET,
+    'HS256'
   );
 
   return c.json({

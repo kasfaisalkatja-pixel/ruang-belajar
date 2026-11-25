@@ -1,7 +1,14 @@
 import { Hono } from 'hono';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq } from 'drizzle-orm';
-import { classMembers, classes, subjects, users } from '../db/schema';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import {
+  assignments,
+  classMembers,
+  classes,
+  materials,
+  subjects,
+  users,
+} from '../db/schema';
 import { generateId, hashPassword } from '../lib/crypto';
 import { requireAuth, requireRole } from '../middleware/auth';
 import type { Bindings, UserRole, Variables } from '../types';
@@ -9,6 +16,27 @@ import type { Bindings, UserRole, Variables } from '../types';
 export const adminRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 adminRoutes.use('*', requireAuth, requireRole('admin'));
+
+adminRoutes.get('/stats', async (c) => {
+  const db = drizzle(c.env.DB);
+  const allUsers = await db.select({ role: users.role }).from(users);
+  const [{ classCount }] = await db.select({ classCount: sql<number>`count(*)` }).from(classes);
+  const [{ subjectCount }] = await db.select({ subjectCount: sql<number>`count(*)` }).from(subjects);
+  const [{ materialCount }] = await db.select({ materialCount: sql<number>`count(*)` }).from(materials);
+  const [{ assignmentCount }] = await db
+    .select({ assignmentCount: sql<number>`count(*)` })
+    .from(assignments);
+
+  return c.json({
+    teachers: allUsers.filter((u) => u.role === 'teacher').length,
+    students: allUsers.filter((u) => u.role === 'student').length,
+    admins: allUsers.filter((u) => u.role === 'admin').length,
+    classes: classCount,
+    subjects: subjectCount,
+    materials: materialCount,
+    assignments: assignmentCount,
+  });
+});
 
 adminRoutes.get('/users', async (c) => {
   const role = c.req.query('role') as UserRole | undefined;
@@ -49,17 +77,19 @@ adminRoutes.post('/users', async (c) => {
     password: string;
     role: UserRole;
     identityNumber?: string;
+    classId?: string;
   }>();
 
   if (!body.name || !body.username || !body.password || !body.role) {
-    return c.json({ error: 'Nama, username, password, dan role wajib diisi' }, 400);
+    return c.json({ error: 'Nama, username, password, dan peran wajib diisi' }, 400);
   }
 
+  const normalizedUsername = body.username.trim().toLowerCase();
   const db = drizzle(c.env.DB);
   const existing = await db
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.username, body.username.trim().toLowerCase()))
+    .where(eq(users.username, normalizedUsername))
     .limit(1);
 
   if (existing.length > 0) {
@@ -73,19 +103,29 @@ adminRoutes.post('/users', async (c) => {
   await db.insert(users).values({
     id,
     name: body.name.trim(),
-    username: body.username.trim().toLowerCase(),
+    username: normalizedUsername,
     passwordHash,
     role: body.role,
     identityNumber: body.identityNumber?.trim() || null,
     createdAt,
   });
 
+  // Auto-enroll student into selected class if provided
+  if (body.role === 'student' && body.classId) {
+    await db.insert(classMembers).values({
+      id: generateId(),
+      classId: body.classId,
+      studentId: id,
+      joinedAt: createdAt,
+    });
+  }
+
   return c.json(
     {
       user: {
         id,
         name: body.name.trim(),
-        username: body.username.trim().toLowerCase(),
+        username: normalizedUsername,
         role: body.role,
         identityNumber: body.identityNumber?.trim() || null,
         createdAt,
@@ -93,6 +133,26 @@ adminRoutes.post('/users', async (c) => {
     },
     201
   );
+});
+
+adminRoutes.patch('/users/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{
+    name?: string;
+    password?: string;
+    identityNumber?: string;
+  }>();
+
+  const db = drizzle(c.env.DB);
+  const updates: Record<string, unknown> = {};
+  if (body.name?.trim()) updates.name = body.name.trim();
+  if (body.identityNumber !== undefined) updates.identityNumber = body.identityNumber.trim() || null;
+  if (body.password?.trim()) updates.passwordHash = await hashPassword(body.password.trim());
+
+  if (Object.keys(updates).length > 0) {
+    await db.update(users).set(updates).where(eq(users.id, id));
+  }
+  return c.json({ message: 'Data pengguna berhasil diperbarui' });
 });
 
 adminRoutes.delete('/users/:id', async (c) => {
@@ -136,7 +196,17 @@ adminRoutes.post('/classes', async (c) => {
     createdAt,
   });
 
-  return c.json({ class: { id, name: body.name.trim(), academicYear: body.academicYear.trim(), createdAt } }, 201);
+  return c.json(
+    { class: { id, name: body.name.trim(), academicYear: body.academicYear.trim(), createdAt } },
+    201
+  );
+});
+
+adminRoutes.delete('/classes/:id', async (c) => {
+  const id = c.req.param('id');
+  const db = drizzle(c.env.DB);
+  await db.delete(classes).where(eq(classes.id, id));
+  return c.json({ message: 'Kelas berhasil dihapus' });
 });
 
 adminRoutes.get('/classes/:id/members', async (c) => {
@@ -163,7 +233,7 @@ adminRoutes.post('/classes/:id/members', async (c) => {
   const classId = c.req.param('id');
   const body = await c.req.json<{ studentId: string }>();
   if (!body.studentId) {
-    return c.json({ error: 'studentId wajib diisi' }, 400);
+    return c.json({ error: 'Siswa wajib dipilih' }, 400);
   }
 
   const db = drizzle(c.env.DB);
@@ -209,6 +279,7 @@ adminRoutes.get('/subjects', async (c) => {
       description: subjects.description,
       classId: subjects.classId,
       className: classes.name,
+      academicYear: classes.academicYear,
       teacherId: subjects.teacherId,
       teacherName: users.name,
       createdAt: subjects.createdAt,
@@ -247,4 +318,11 @@ adminRoutes.post('/subjects', async (c) => {
   });
 
   return c.json({ id, message: 'Mata pelajaran berhasil dibuat' }, 201);
+});
+
+adminRoutes.delete('/subjects/:id', async (c) => {
+  const id = c.req.param('id');
+  const db = drizzle(c.env.DB);
+  await db.delete(subjects).where(eq(subjects.id, id));
+  return c.json({ message: 'Mata pelajaran berhasil dihapus' });
 });

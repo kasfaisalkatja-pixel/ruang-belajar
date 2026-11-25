@@ -6,6 +6,13 @@ CREATE TABLE IF NOT EXISTS `files` (
   `created_at` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `file_chunks` (
+  `id` text PRIMARY KEY NOT NULL,
+  `file_id` text NOT NULL REFERENCES `files`(`id`) ON DELETE CASCADE,
+  `chunk_index` integer NOT NULL,
+  `data_base64` text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `users` (
   `id` text PRIMARY KEY NOT NULL,
   `name` text NOT NULL,

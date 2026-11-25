@@ -8,6 +8,15 @@ export const files = sqliteTable('files', {
   createdAt: text('created_at').notNull(),
 });
 
+export const fileChunks = sqliteTable('file_chunks', {
+  id: text('id').primaryKey(),
+  fileId: text('file_id')
+    .notNull()
+    .references(() => files.id, { onDelete: 'cascade' }),
+  chunkIndex: integer('chunk_index').notNull(),
+  dataBase64: text('data_base64').notNull(),
+});
+
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

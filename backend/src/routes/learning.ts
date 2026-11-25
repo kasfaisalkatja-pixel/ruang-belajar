@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { drizzle } from 'drizzle-orm/d1';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import {
   assignments,
   classMembers,
   classes,
+  fileChunks,
   files,
   materialReads,
   materials,
@@ -20,14 +21,14 @@ export const learningRoutes = new Hono<{ Bindings: Bindings; Variables: Variable
 
 learningRoutes.use('*', requireAuth);
 
-const MAX_FILE_BYTES = 1024 * 1024; // 1 MB (batas aman untuk Cloudflare D1)
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB untuk PDF, Word (.doc/.docx), PPT, Gambar
+const CHUNK_BYTE_SIZE = 512 * 1024; // 512 KB per chunk agar aman di bawah limit 1 MB per baris D1
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + step));
   }
   return btoa(binary);
 }
@@ -41,20 +42,79 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-/** Upload helper storing small files directly in Cloudflare D1 (no R2 needed) */
-async function saveFileToD1(db: ReturnType<typeof drizzle>, file: File) {
+function inferMimeType(fileName: string, providedType?: string): string {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.docx'))
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lower.endsWith('.doc')) return 'application/msword';
+  if (lower.endsWith('.pptx'))
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (lower.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+  if (lower.endsWith('.xlsx'))
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (providedType && providedType !== 'application/octet-stream') return providedType;
+  return 'application/octet-stream';
+}
+
+async function ensureFileChunksTable(rawDb: D1Database) {
+  await rawDb
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS file_chunks (
+        id text PRIMARY KEY NOT NULL,
+        file_id text NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        chunk_index integer NOT NULL,
+        data_base64 text NOT NULL
+      )`
+    )
+    .run();
+}
+
+/** Save PDF, Word, PPT, or Image up to 10 MB directly into D1 using safe 512 KB chunks */
+async function saveFileToD1(rawDb: D1Database, db: ReturnType<typeof drizzle>, file: File) {
   if (file.size > MAX_FILE_BYTES) {
-    throw new Error('Ukuran file maksimal 1 MB. Untuk file besar, gunakan tautan Google Drive/YouTube.');
+    throw new Error('Ukuran file maksimal 10 MB. Untuk file lebih besar, lampirkan tautan Google Drive.');
   }
+
+  await ensureFileChunksTable(rawDb);
+
   const id = generateId();
-  const dataBase64 = arrayBufferToBase64(await file.arrayBuffer());
-  await db.insert(files).values({
-    id,
-    name: file.name,
-    contentType: file.type || 'application/octet-stream',
-    dataBase64,
-    createdAt: new Date().toISOString(),
-  });
+  const contentType = inferMimeType(file.name, file.type);
+  const allBytes = new Uint8Array(await file.arrayBuffer());
+  const createdAt = new Date().toISOString();
+
+  if (allBytes.length <= CHUNK_BYTE_SIZE) {
+    await db.insert(files).values({
+      id,
+      name: file.name,
+      contentType,
+      dataBase64: uint8ToBase64(allBytes),
+      createdAt,
+    });
+  } else {
+    // Store metadata in `files` with marker '__CHUNKED__' and chunks in `file_chunks`
+    await db.insert(files).values({
+      id,
+      name: file.name,
+      contentType,
+      dataBase64: '__CHUNKED__',
+      createdAt,
+    });
+
+    let chunkIndex = 0;
+    for (let offset = 0; offset < allBytes.length; offset += CHUNK_BYTE_SIZE) {
+      const slice = allBytes.subarray(offset, offset + CHUNK_BYTE_SIZE);
+      await db.insert(fileChunks).values({
+        id: generateId(),
+        fileId: id,
+        chunkIndex,
+        dataBase64: uint8ToBase64(slice),
+      });
+      chunkIndex++;
+    }
+  }
+
   return { fileKey: id, fileName: file.name };
 }
 
@@ -64,7 +124,11 @@ learningRoutes.get('/dashboard', async (c) => {
 
   if (user.role === 'student') {
     const memberships = await db
-      .select({ classId: classMembers.classId, className: classes.name, academicYear: classes.academicYear })
+      .select({
+        classId: classMembers.classId,
+        className: classes.name,
+        academicYear: classes.academicYear,
+      })
       .from(classMembers)
       .innerJoin(classes, eq(classMembers.classId, classes.id))
       .where(eq(classMembers.studentId, user.id));
@@ -90,15 +154,19 @@ learningRoutes.get('/dashboard', async (c) => {
 
     const subjectIds = mySubjects.map((s) => s.id);
     if (subjectIds.length === 0) {
-      return c.json({ classes: memberships, subjects: [], recentMaterials: [], activeAssignments: [] });
+      return c.json({
+        classes: memberships,
+        subjects: [],
+        recentMaterials: [],
+        activeAssignments: [],
+      });
     }
 
     const myMaterials = await db
       .select()
       .from(materials)
       .where(inArray(materials.subjectId, subjectIds))
-      .orderBy(desc(materials.createdAt))
-      .limit(10);
+      .orderBy(desc(materials.createdAt));
 
     const myReads = await db
       .select()
@@ -117,7 +185,6 @@ learningRoutes.get('/dashboard', async (c) => {
       .from(submissions)
       .where(eq(submissions.studentId, user.id));
     const subMap = new Map(mySubmissions.map((s) => [s.assignmentId, s]));
-
     const subjectMap = new Map(mySubjects.map((s) => [s.id, s]));
 
     return c.json({
@@ -126,34 +193,51 @@ learningRoutes.get('/dashboard', async (c) => {
       recentMaterials: myMaterials.map((m) => ({
         ...m,
         subjectName: subjectMap.get(m.subjectId)?.name ?? '',
+        teacherName: subjectMap.get(m.subjectId)?.teacherName ?? '',
         isRead: readSet.has(m.id),
       })),
       activeAssignments: myAssignments.map((a) => ({
         ...a,
         subjectName: subjectMap.get(a.subjectId)?.name ?? '',
+        teacherName: subjectMap.get(a.subjectId)?.teacherName ?? '',
         submission: subMap.get(a.id) ?? null,
       })),
     });
   }
 
-  if (user.role === 'teacher') {
-    const mySubjects = await db
-      .select({
-        id: subjects.id,
-        name: subjects.name,
-        description: subjects.description,
-        classId: subjects.classId,
-        className: classes.name,
-        academicYear: classes.academicYear,
-      })
-      .from(subjects)
-      .innerJoin(classes, eq(subjects.classId, classes.id))
-      .where(eq(subjects.teacherId, user.id));
+  // Teacher or Admin: list subjects they can manage and send materials/assignments to
+  const baseQuery = db
+    .select({
+      id: subjects.id,
+      name: subjects.name,
+      description: subjects.description,
+      classId: subjects.classId,
+      className: classes.name,
+      academicYear: classes.academicYear,
+      teacherId: subjects.teacherId,
+      teacherName: users.name,
+    })
+    .from(subjects)
+    .innerJoin(classes, eq(subjects.classId, classes.id))
+    .innerJoin(users, eq(subjects.teacherId, users.id));
 
-    return c.json({ subjects: mySubjects });
-  }
+  const managedSubjects =
+    user.role === 'teacher'
+      ? await baseQuery.where(eq(subjects.teacherId, user.id))
+      : await baseQuery.orderBy(desc(subjects.createdAt));
 
-  return c.json({ message: 'Gunakan menu Admin untuk mengelola sistem' });
+  const allMembers = await db.select().from(classMembers);
+  const allMaterials = await db.select().from(materials);
+  const allAssignments = await db.select().from(assignments);
+
+  return c.json({
+    subjects: managedSubjects.map((s) => ({
+      ...s,
+      studentCount: allMembers.filter((m) => m.classId === s.classId).length,
+      materialCount: allMaterials.filter((m) => m.subjectId === s.id).length,
+      assignmentCount: allAssignments.filter((a) => a.subjectId === s.id).length,
+    })),
+  });
 });
 
 learningRoutes.get('/subjects/:subjectId', async (c) => {
@@ -168,6 +252,7 @@ learningRoutes.get('/subjects/:subjectId', async (c) => {
       description: subjects.description,
       classId: subjects.classId,
       className: classes.name,
+      academicYear: classes.academicYear,
       teacherId: subjects.teacherId,
       teacherName: users.name,
     })
@@ -213,7 +298,6 @@ learningRoutes.get('/subjects/:subjectId', async (c) => {
     });
   }
 
-  // Teacher / Admin view includes counts
   const classStudents = await db
     .select({ studentId: classMembers.studentId })
     .from(classMembers)
@@ -232,62 +316,82 @@ learningRoutes.get('/subjects/:subjectId', async (c) => {
     assignments: subjectAssignments.map((a) => ({
       ...a,
       submissionCount: allSubs.filter((s) => s.assignmentId === a.id).length,
+      gradedCount: allSubs.filter((s) => s.assignmentId === a.id && s.score !== null).length,
     })),
   });
 });
 
-learningRoutes.post('/subjects/:subjectId/materials', requireRole('teacher'), async (c) => {
-  const subjectId = c.req.param('subjectId');
-  const user = c.get('user');
-  const db = drizzle(c.env.DB);
+learningRoutes.post(
+  '/subjects/:subjectId/materials',
+  requireRole('teacher', 'admin'),
+  async (c) => {
+    const subjectId = c.req.param('subjectId');
+    const user = c.get('user');
+    const db = drizzle(c.env.DB);
 
-  const [subject] = await db
-    .select()
-    .from(subjects)
-    .where(and(eq(subjects.id, subjectId), eq(subjects.teacherId, user.id)))
-    .limit(1);
+    const [subject] = await db
+      .select()
+      .from(subjects)
+      .where(
+        user.role === 'admin'
+          ? eq(subjects.id, subjectId)
+          : and(eq(subjects.id, subjectId), eq(subjects.teacherId, user.id))
+      )
+      .limit(1);
 
-  if (!subject) {
-    return c.json({ error: 'Anda tidak mengampu mata pelajaran ini' }, 403);
-  }
-
-  const formData = await c.req.formData();
-  const title = String(formData.get('title') ?? '').trim();
-  const content = String(formData.get('content') ?? '').trim();
-  const videoUrl = String(formData.get('videoUrl') ?? '').trim() || null;
-  const file = formData.get('file');
-
-  if (!title || !content) {
-    return c.json({ error: 'Judul dan isi materi wajib diisi' }, 400);
-  }
-
-  let fileKey: string | null = null;
-  let fileName: string | null = null;
-  if (file instanceof File && file.size > 0) {
-    try {
-      const uploaded = await saveFileToD1(db, file);
-      fileKey = uploaded.fileKey;
-      fileName = uploaded.fileName;
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    if (!subject) {
+      return c.json({ error: 'Anda tidak mengampu mata pelajaran ini' }, 403);
     }
+
+    const formData = await c.req.formData();
+    const title = String(formData.get('title') ?? '').trim();
+    const content = String(formData.get('content') ?? '').trim();
+    const videoUrl = String(formData.get('videoUrl') ?? '').trim() || null;
+    const file = formData.get('file');
+
+    if (!title || !content) {
+      return c.json({ error: 'Judul dan isi/deskripsi materi wajib diisi' }, 400);
+    }
+
+    let fileKey: string | null = null;
+    let fileName: string | null = null;
+    if (file instanceof File && file.size > 0) {
+      try {
+        const uploaded = await saveFileToD1(c.env.DB, db, file);
+        fileKey = uploaded.fileKey;
+        fileName = uploaded.fileName;
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+      }
+    }
+
+    const id = generateId();
+    const createdAt = new Date().toISOString();
+
+    await db.insert(materials).values({
+      id,
+      subjectId,
+      title,
+      content,
+      fileKey,
+      fileName,
+      videoUrl,
+      createdAt,
+    });
+
+    return c.json({ id, message: 'Materi berhasil dikirim ke akun seluruh siswa di kelas!' }, 201);
   }
+);
 
-  const id = generateId();
-  const createdAt = new Date().toISOString();
-
-  await db.insert(materials).values({
-    id,
-    subjectId,
-    title,
-    content,
-    fileKey,
-    fileName,
-    videoUrl,
-    createdAt,
-  });
-
-  return c.json({ id, message: 'Materi berhasil dikirim ke siswa' }, 201);
+learningRoutes.delete('/materials/:materialId', requireRole('teacher', 'admin'), async (c) => {
+  const materialId = c.req.param('materialId');
+  const db = drizzle(c.env.DB);
+  const [mat] = await db.select().from(materials).where(eq(materials.id, materialId)).limit(1);
+  if (mat?.fileKey) {
+    await db.delete(files).where(eq(files.id, mat.fileKey));
+  }
+  await db.delete(materials).where(eq(materials.id, materialId));
+  return c.json({ message: 'Materi berhasil dihapus' });
 });
 
 learningRoutes.post('/materials/:materialId/read', requireRole('student'), async (c) => {
@@ -336,6 +440,7 @@ learningRoutes.get('/materials/:materialId/reads', requireRole('teacher', 'admin
   const readMap = new Map(reads.map((r) => [r.studentId, r.readAt]));
 
   return c.json({
+    materialTitle: mat.title,
     students: members.map((m) => ({
       ...m,
       readAt: readMap.get(m.studentId) ?? null,
@@ -343,58 +448,81 @@ learningRoutes.get('/materials/:materialId/reads', requireRole('teacher', 'admin
   });
 });
 
-learningRoutes.post('/subjects/:subjectId/assignments', requireRole('teacher'), async (c) => {
-  const subjectId = c.req.param('subjectId');
-  const user = c.get('user');
-  const db = drizzle(c.env.DB);
+learningRoutes.post(
+  '/subjects/:subjectId/assignments',
+  requireRole('teacher', 'admin'),
+  async (c) => {
+    const subjectId = c.req.param('subjectId');
+    const user = c.get('user');
+    const db = drizzle(c.env.DB);
 
-  const [subject] = await db
-    .select()
-    .from(subjects)
-    .where(and(eq(subjects.id, subjectId), eq(subjects.teacherId, user.id)))
-    .limit(1);
+    const [subject] = await db
+      .select()
+      .from(subjects)
+      .where(
+        user.role === 'admin'
+          ? eq(subjects.id, subjectId)
+          : and(eq(subjects.id, subjectId), eq(subjects.teacherId, user.id))
+      )
+      .limit(1);
 
-  if (!subject) {
-    return c.json({ error: 'Anda tidak mengampu mata pelajaran ini' }, 403);
-  }
-
-  const formData = await c.req.formData();
-  const title = String(formData.get('title') ?? '').trim();
-  const description = String(formData.get('description') ?? '').trim();
-  const dueDate = String(formData.get('dueDate') ?? '').trim();
-  const maxScore = Number(formData.get('maxScore') ?? 100) || 100;
-  const file = formData.get('file');
-
-  if (!title || !description || !dueDate) {
-    return c.json({ error: 'Judul, instruksi, dan tenggat waktu wajib diisi' }, 400);
-  }
-
-  let fileKey: string | null = null;
-  let fileName: string | null = null;
-  if (file instanceof File && file.size > 0) {
-    try {
-      const uploaded = await saveFileToD1(db, file);
-      fileKey = uploaded.fileKey;
-      fileName = uploaded.fileName;
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+    if (!subject) {
+      return c.json({ error: 'Anda tidak mengampu mata pelajaran ini' }, 403);
     }
+
+    const formData = await c.req.formData();
+    const title = String(formData.get('title') ?? '').trim();
+    const description = String(formData.get('description') ?? '').trim();
+    const dueDate = String(formData.get('dueDate') ?? '').trim();
+    const maxScore = Number(formData.get('maxScore') ?? 100) || 100;
+    const file = formData.get('file');
+
+    if (!title || !description || !dueDate) {
+      return c.json({ error: 'Judul, instruksi, dan tenggat waktu wajib diisi' }, 400);
+    }
+
+    let fileKey: string | null = null;
+    let fileName: string | null = null;
+    if (file instanceof File && file.size > 0) {
+      try {
+        const uploaded = await saveFileToD1(c.env.DB, db, file);
+        fileKey = uploaded.fileKey;
+        fileName = uploaded.fileName;
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : 'Gagal menyimpan file' }, 400);
+      }
+    }
+
+    const id = generateId();
+    await db.insert(assignments).values({
+      id,
+      subjectId,
+      title,
+      description,
+      fileKey,
+      fileName,
+      dueDate,
+      maxScore,
+      createdAt: new Date().toISOString(),
+    });
+
+    return c.json({ id, message: 'Tugas berhasil dikirim ke akun seluruh siswa di kelas!' }, 201);
   }
+);
 
-  const id = generateId();
-  await db.insert(assignments).values({
-    id,
-    subjectId,
-    title,
-    description,
-    fileKey,
-    fileName,
-    dueDate,
-    maxScore,
-    createdAt: new Date().toISOString(),
-  });
-
-  return c.json({ id, message: 'Tugas berhasil dikirim ke siswa' }, 201);
+learningRoutes.delete('/assignments/:assignmentId', requireRole('teacher', 'admin'), async (c) => {
+  const assignmentId = c.req.param('assignmentId');
+  const db = drizzle(c.env.DB);
+  const [asg] = await db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.id, assignmentId))
+    .limit(1);
+  if (asg?.fileKey) {
+    await db.delete(files).where(eq(files.id, asg.fileKey));
+  }
+  await db.delete(assignments).where(eq(assignments.id, assignmentId));
+  return c.json({ message: 'Tugas berhasil dihapus' });
 });
 
 learningRoutes.post('/assignments/:assignmentId/submit', requireRole('student'), async (c) => {
@@ -407,14 +535,14 @@ learningRoutes.post('/assignments/:assignmentId/submit', requireRole('student'),
   const file = formData.get('file');
 
   if (!content && !(file instanceof File && file.size > 0)) {
-    return c.json({ error: 'Isi jawaban teks atau unggah file tugas' }, 400);
+    return c.json({ error: 'Isi jawaban teks atau unggah file tugas (PDF/Word/Gambar)' }, 400);
   }
 
   let fileKey: string | null = null;
   let fileName: string | null = null;
   if (file instanceof File && file.size > 0) {
     try {
-      const uploaded = await saveFileToD1(db, file);
+      const uploaded = await saveFileToD1(c.env.DB, db, file);
       fileKey = uploaded.fileKey;
       fileName = uploaded.fileName;
     } catch (err) {
@@ -441,7 +569,7 @@ learningRoutes.post('/assignments/:assignmentId/submit', requireRole('student'),
       })
       .where(eq(submissions.id, existing.id));
 
-    return c.json({ message: 'Jawaban tugas berhasil diperbarui' });
+    return c.json({ message: 'Jawaban tugas berhasil diperbarui!' });
   }
 
   await db.insert(submissions).values({
@@ -454,55 +582,59 @@ learningRoutes.post('/assignments/:assignmentId/submit', requireRole('student'),
     submittedAt: now,
   });
 
-  return c.json({ message: 'Tugas berhasil dikumpulkan' }, 201);
+  return c.json({ message: 'Tugas berhasil dikumpulkan!' }, 201);
 });
 
-learningRoutes.get('/assignments/:assignmentId/submissions', requireRole('teacher', 'admin'), async (c) => {
-  const assignmentId = c.req.param('assignmentId');
-  const db = drizzle(c.env.DB);
+learningRoutes.get(
+  '/assignments/:assignmentId/submissions',
+  requireRole('teacher', 'admin'),
+  async (c) => {
+    const assignmentId = c.req.param('assignmentId');
+    const db = drizzle(c.env.DB);
 
-  const [assignment] = await db
-    .select()
-    .from(assignments)
-    .where(eq(assignments.id, assignmentId))
-    .limit(1);
-  if (!assignment) return c.json({ error: 'Tugas tidak ditemukan' }, 404);
+    const [assignment] = await db
+      .select()
+      .from(assignments)
+      .where(eq(assignments.id, assignmentId))
+      .limit(1);
+    if (!assignment) return c.json({ error: 'Tugas tidak ditemukan' }, 404);
 
-  const [subj] = await db
-    .select()
-    .from(subjects)
-    .where(eq(subjects.id, assignment.subjectId))
-    .limit(1);
-  if (!subj) return c.json({ error: 'Mapel tidak ditemukan' }, 404);
+    const [subj] = await db
+      .select()
+      .from(subjects)
+      .where(eq(subjects.id, assignment.subjectId))
+      .limit(1);
+    if (!subj) return c.json({ error: 'Mapel tidak ditemukan' }, 404);
 
-  const members = await db
-    .select({ studentId: users.id, name: users.name, identityNumber: users.identityNumber })
-    .from(classMembers)
-    .innerJoin(users, eq(classMembers.studentId, users.id))
-    .where(eq(classMembers.classId, subj.classId));
+    const members = await db
+      .select({ studentId: users.id, name: users.name, identityNumber: users.identityNumber })
+      .from(classMembers)
+      .innerJoin(users, eq(classMembers.studentId, users.id))
+      .where(eq(classMembers.classId, subj.classId));
 
-  const subs = await db
-    .select()
-    .from(submissions)
-    .where(eq(submissions.assignmentId, assignmentId));
-  const subMap = new Map(subs.map((s) => [s.studentId, s]));
+    const subs = await db
+      .select()
+      .from(submissions)
+      .where(eq(submissions.assignmentId, assignmentId));
+    const subMap = new Map(subs.map((s) => [s.studentId, s]));
 
-  return c.json({
-    assignment,
-    submissions: members.map((m) => ({
-      studentId: m.studentId,
-      studentName: m.name,
-      identityNumber: m.identityNumber,
-      submission: subMap.get(m.studentId) ?? null,
-    })),
-  });
-});
+    return c.json({
+      assignment,
+      submissions: members.map((m) => ({
+        studentId: m.studentId,
+        studentName: m.name,
+        identityNumber: m.identityNumber,
+        submission: subMap.get(m.studentId) ?? null,
+      })),
+    });
+  }
+);
 
-learningRoutes.patch('/submissions/:submissionId/grade', requireRole('teacher'), async (c) => {
+learningRoutes.patch('/submissions/:submissionId/grade', requireRole('teacher', 'admin'), async (c) => {
   const submissionId = c.req.param('submissionId');
   const body = await c.req.json<{ score: number; feedback?: string }>();
 
-  if (typeof body.score !== 'number' || body.score < 0) {
+  if (typeof body.score !== 'number' || Number.isNaN(body.score) || body.score < 0) {
     return c.json({ error: 'Nilai tidak valid' }, 400);
   }
 
@@ -516,22 +648,47 @@ learningRoutes.patch('/submissions/:submissionId/grade', requireRole('teacher'),
     })
     .where(eq(submissions.id, submissionId));
 
-  return c.json({ message: 'Nilai berhasil disimpan' });
+  return c.json({ message: 'Nilai & umpan balik berhasil disimpan!' });
 });
 
 learningRoutes.get('/files/:key{.+}', async (c) => {
   const key = c.req.param('key');
+  const inline = c.req.query('inline') === '1';
   const db = drizzle(c.env.DB);
+
   const [fileRow] = await db.select().from(files).where(eq(files.id, key)).limit(1);
   if (!fileRow) {
     return c.json({ error: 'File tidak ditemukan' }, 404);
   }
 
-  const bytes = base64ToUint8Array(fileRow.dataBase64);
-  return new Response(bytes, {
+  let outputBytes: Uint8Array;
+  if (fileRow.dataBase64 === '__CHUNKED__') {
+    await ensureFileChunksTable(c.env.DB);
+    const chunks = await db
+      .select()
+      .from(fileChunks)
+      .where(eq(fileChunks.fileId, key))
+      .orderBy(asc(fileChunks.chunkIndex));
+
+    const decodedChunks = chunks.map((ch) => base64ToUint8Array(ch.dataBase64));
+    const totalLength = decodedChunks.reduce((acc, arr) => acc + arr.length, 0);
+    outputBytes = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const arr of decodedChunks) {
+      outputBytes.set(arr, offset);
+      offset += arr.length;
+    }
+  } else {
+    outputBytes = base64ToUint8Array(fileRow.dataBase64);
+  }
+
+  const safeFilename = fileRow.name.replace(/"/g, '_');
+  const disposition = inline ? 'inline' : 'attachment';
+
+  return new Response(outputBytes as unknown as BodyInit, {
     headers: {
-      'Content-Type': fileRow.contentType,
-      'Content-Disposition': `attachment; filename="${fileRow.name.replace(/"/g, '_')}"`,
+      'Content-Type': inferMimeType(fileRow.name, fileRow.contentType),
+      'Content-Disposition': `${disposition}; filename="${safeFilename}"`,
     },
   });
 });
