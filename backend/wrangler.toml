@@ -1,0 +1,17 @@
+name = "ruang-belajar-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[vars]
+JWT_SECRET = "ganti-dengan-secret-key-yang-kuat-di-production"
+CORS_ORIGIN = "http://localhost:5173"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ruang_belajar_db"
+database_id = "GANTI_DENGAN_DATABASE_ID_DARI_CLOUDFLARE"
+migrations_dir = "drizzle"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "ruang-belajar-files"

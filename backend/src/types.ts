@@ -1,0 +1,20 @@
+export type UserRole = 'admin' | 'teacher' | 'student';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  username: string;
+  role: UserRole;
+  identityNumber?: string | null;
+}
+
+export interface Bindings {
+  DB: D1Database;
+  BUCKET: R2Bucket;
+  JWT_SECRET: string;
+  CORS_ORIGIN: string;
+}
+
+export interface Variables {
+  user: AuthUser;
+}
