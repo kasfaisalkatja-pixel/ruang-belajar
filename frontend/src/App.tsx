@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, LogOut } from 'lucide-react';
+import { Rocket, LogOut } from 'lucide-react';
 import { apiFetch, getToken, setToken, User } from './lib/api';
 import { LoginPage } from './pages/LoginPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { TeacherDashboard } from './pages/TeacherDashboard';
 import { StudentDashboard } from './pages/StudentDashboard';
+import { ChangePasswordScreen } from './components/ChangePasswordScreen';
 
 const ROLE_LABEL: Record<User['role'], string> = {
   admin: 'Admin / Operator Sekolah',
   teacher: 'Guru Pengajar',
-  student: 'Siswa',
+  student: 'Siswa Aktif',
 };
 
 export function App() {
@@ -50,11 +51,11 @@ export function App() {
 
   if (checking) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-slate-50 text-slate-600">
-        <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center animate-bounce shadow-lg">
-          <BookOpen className="w-6 h-6" />
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-indigo-50 via-white to-violet-50 text-slate-700">
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center animate-rocket shadow-xl">
+          <Rocket className="w-7 h-7" />
         </div>
-        <span className="text-sm font-semibold">Memuat Ruang Belajar...</span>
+        <span className="text-sm font-bold">Menyiapkan Ruang Belajar...</span>
       </div>
     );
   }
@@ -71,6 +72,17 @@ export function App() {
     );
   }
 
+  // Redirect student on first login (or after Admin resets password back to NISN) to create a new password
+  if (user.mustChangePassword) {
+    return (
+      <ChangePasswordScreen
+        user={user}
+        onPasswordChanged={(updated) => setUser(updated)}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   const initials = user.name
     .split(' ')
     .map((p) => p[0])
@@ -79,16 +91,23 @@ export function App() {
     .toUpperCase();
 
   return (
-    <div className="min-h-screen bg-slate-50/80">
-      <header className="bg-white/85 backdrop-blur-md border-b border-slate-200 sticky top-0 z-20">
+    <div className="relative min-h-screen bg-gradient-to-b from-indigo-50/50 via-slate-50 to-sky-50/40 overflow-x-hidden">
+      {/* Subtle animated ambient blobs inside the app */}
+      <div className="pointer-events-none fixed top-20 -left-24 h-72 w-72 rounded-full bg-indigo-400/10 blur-3xl animate-float-slow" />
+      <div className="pointer-events-none fixed bottom-10 -right-24 h-80 w-80 rounded-full bg-fuchsia-400/10 blur-3xl animate-float-reverse" />
+
+      <header className="bg-white/85 backdrop-blur-md border-b border-indigo-100 sticky top-0 z-20 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20">
-              <BookOpen className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 animate-rocket">
+              <Rocket className="w-5 h-5" />
             </div>
             <div>
-              <div className="font-extrabold text-slate-900 leading-tight tracking-tight">
+              <div className="font-extrabold text-slate-900 leading-tight tracking-tight flex items-center gap-2">
                 Ruang Belajar
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" /> Aktif
+                </span>
               </div>
               <div className="text-[11px] font-semibold text-indigo-600">
                 {ROLE_LABEL[user.role]}
@@ -97,18 +116,22 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2.5 bg-slate-100/80 px-3 py-1.5 rounded-xl">
-              <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+            <div className="hidden sm:flex items-center gap-2.5 bg-indigo-50/70 border border-indigo-100 px-3 py-1.5 rounded-xl">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white text-xs font-bold flex items-center justify-center">
                 {initials}
               </div>
               <div className="text-left">
                 <div className="text-xs font-bold text-slate-900 leading-tight">{user.name}</div>
-                <div className="text-[11px] text-slate-500">@{user.username}</div>
+                <div className="text-[11px] text-slate-500">
+                  {user.role === 'student'
+                    ? `NISN: ${user.identityNumber || user.username}`
+                    : `@${user.username}`}
+                </div>
               </div>
             </div>
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" /> Keluar
             </button>
@@ -116,7 +139,7 @@ export function App() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className="relative z-10 max-w-6xl mx-auto px-4 py-6">
         {user.role === 'admin' && <AdminDashboard />}
         {user.role === 'teacher' && <TeacherDashboard />}
         {user.role === 'student' && <StudentDashboard user={user} />}

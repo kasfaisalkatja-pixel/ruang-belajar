@@ -9,9 +9,14 @@ import {
   Send,
   KeyRound,
   CheckCircle2,
+  FileSpreadsheet,
+  RotateCcw,
+  Search,
 } from 'lucide-react';
 import { apiFetch, UserRole } from '../lib/api';
 import { TeacherDashboard } from './TeacherDashboard';
+import { StudentExcelImporter } from '../components/StudentExcelImporter';
+import { RunningBanner } from '../components/RunningBanner';
 
 interface UserRow {
   id: string;
@@ -19,6 +24,9 @@ interface UserRow {
   username: string;
   role: UserRole;
   identityNumber?: string | null;
+  gender?: string | null;
+  mustChangePassword?: number;
+  className?: string | null;
 }
 
 interface ClassRow {
@@ -44,6 +52,7 @@ interface MemberRow {
   name: string;
   username: string;
   identityNumber?: string | null;
+  gender?: string | null;
 }
 
 interface Stats {
@@ -56,25 +65,28 @@ interface Stats {
 }
 
 export function AdminDashboard() {
-  const [tab, setTab] = useState<'users' | 'classes' | 'subjects' | 'learning'>('users');
+  const [tab, setTab] = useState<'users' | 'import' | 'classes' | 'subjects' | 'learning'>('users');
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [selectedClass, setSelectedClass] = useState<ClassRow | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Form Akun
+  // Form Akun Manual
   const [uName, setUName] = useState('');
   const [uUsername, setUUsername] = useState('');
   const [uPassword, setUPassword] = useState('');
   const [uRole, setURole] = useState<UserRole>('student');
   const [uIdentity, setUIdentity] = useState('');
+  const [uGender, setUGender] = useState('Laki-laki');
   const [uClassId, setUClassId] = useState('');
 
-  // Reset Password Modal
+  // Custom Password Modal (Guru/Admin)
   const [resetUser, setResetUser] = useState<UserRow | null>(null);
   const [newPassword, setNewPassword] = useState('');
 
@@ -124,10 +136,11 @@ export function AdminDashboard() {
         method: 'POST',
         body: JSON.stringify({
           name: uName,
-          username: uUsername,
-          password: uPassword,
+          username: uRole === 'student' ? uIdentity : uUsername,
+          password: uRole === 'student' ? uIdentity : uPassword,
           role: uRole,
           identityNumber: uIdentity,
+          gender: uRole === 'student' ? uGender : undefined,
           classId: uRole === 'student' && uClassId ? uClassId : undefined,
         }),
       });
@@ -135,14 +148,39 @@ export function AdminDashboard() {
       setUUsername('');
       setUPassword('');
       setUIdentity('');
-      setSuccess('Akun baru berhasil dibuat!');
+      setSuccess(
+        uRole === 'student'
+          ? 'Siswa berhasil ditambahkan! Password awal diset otomatis ke NISN.'
+          : 'Akun berhasil dibuat!'
+      );
       loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal membuat akun');
     }
   }
 
-  async function handleResetPassword(e: React.FormEvent) {
+  async function handleResetStudentToNisn(u: UserRow) {
+    if (
+      !confirm(
+        `Reset password siswa "${u.name}" kembali ke password awal yaitu NISN (${u.identityNumber})?`
+      )
+    ) {
+      return;
+    }
+    setError('');
+    setSuccess('');
+    try {
+      const res = await apiFetch<{ message: string }>(`/api/admin/users/${u.id}/reset-nisn`, {
+        method: 'POST',
+      });
+      setSuccess(res.message);
+      loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal mereset password ke NISN');
+    }
+  }
+
+  async function handleResetCustomPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!resetUser || !newPassword) return;
     await apiFetch(`/api/admin/users/${resetUser.id}`, {
@@ -152,6 +190,7 @@ export function AdminDashboard() {
     setResetUser(null);
     setNewPassword('');
     setSuccess(`Password untuk ${resetUser.name} berhasil diperbarui!`);
+    loadAll();
   }
 
   async function handleDeleteUser(id: string) {
@@ -244,8 +283,30 @@ export function AdminDashboard() {
   const teachers = users.filter((u) => u.role === 'teacher' || u.role === 'admin');
   const students = users.filter((u) => u.role === 'student');
 
+  const filteredUsers = users.filter((u) => {
+    if (roleFilter !== 'all' && u.role !== roleFilter) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      (u.identityNumber || '').toLowerCase().includes(q) ||
+      (u.className || '').toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="space-y-6 animate-fade-up">
+      <RunningBanner
+        variant="admin"
+        items={[
+          'Selamat datang di Panel Operator Ruang Belajar Sekolah',
+          'Gunakan menu Import Excel Siswa untuk mengunggah Nomor, Nama, Jenis Kelamin, NISN, dan Kelas sekaligus',
+          'Siswa login cukup memakai Nama Lengkap & NISN, lalu otomatis diarahkan membuat password baru',
+          'Jika siswa lupa password, klik tombol Reset ke NISN pada tabel siswa untuk mengembalikan password ke NISN',
+        ]}
+      />
+
       {/* Animated Summary Stats */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -283,7 +344,17 @@ export function AdminDashboard() {
               : 'bg-white text-slate-600 border border-slate-200 hover:border-indigo-300'
           }`}
         >
-          <Users className="w-4 h-4" /> 1. Akun Guru & Siswa
+          <Users className="w-4 h-4" /> Akun & Reset Password
+        </button>
+        <button
+          onClick={() => setTab('import')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${
+            tab === 'import'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
+              : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4" /> Import Excel Siswa
         </button>
         <button
           onClick={() => setTab('classes')}
@@ -293,7 +364,7 @@ export function AdminDashboard() {
               : 'bg-white text-slate-600 border border-slate-200 hover:border-indigo-300'
           }`}
         >
-          <GraduationCap className="w-4 h-4" /> 2. Kelas & Anggota
+          <GraduationCap className="w-4 h-4" /> Kelas & Anggota
         </button>
         <button
           onClick={() => setTab('subjects')}
@@ -303,7 +374,7 @@ export function AdminDashboard() {
               : 'bg-white text-slate-600 border border-slate-200 hover:border-indigo-300'
           }`}
         >
-          <BookMarked className="w-4 h-4" /> 3. Mata Pelajaran
+          <BookMarked className="w-4 h-4" /> Mata Pelajaran
         </button>
         <button
           onClick={() => setTab('learning')}
@@ -313,7 +384,7 @@ export function AdminDashboard() {
               : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'
           }`}
         >
-          <Send className="w-4 h-4" /> 4. Kirim Materi & Tugas (PDF / Word)
+          <Send className="w-4 h-4" /> Kirim Materi & Tugas (PDF / Word)
         </button>
       </div>
 
@@ -324,32 +395,33 @@ export function AdminDashboard() {
       )}
       {success && (
         <div className="animate-scale-in p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4" /> {success}
+          <CheckCircle2 className="w-4 h-4 shrink-0" /> {success}
         </div>
       )}
 
-      {tab === 'learning' ? (
-        <TeacherDashboard />
-      ) : null}
+      {tab === 'import' && <StudentExcelImporter onImportComplete={loadAll} />}
+
+      {tab === 'learning' && <TeacherDashboard showBanner={false} />}
 
       {tab === 'users' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <form
             onSubmit={handleCreateUser}
-            className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3.5 h-fit"
+            className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3.5 h-fit"
           >
             <h2 className="font-bold text-slate-900 flex items-center gap-2">
-              <Plus className="w-4 h-4 text-indigo-600" /> Tambah Akun Baru
+              <Plus className="w-4 h-4 text-indigo-600" /> Tambah Akun Manual
             </h2>
             <select
               value={uRole}
               onChange={(e) => setURole(e.target.value as UserRole)}
               className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50"
             >
-              <option value="student">Akun Siswa</option>
+              <option value="student">Akun Siswa (Login Nama + NISN)</option>
               <option value="teacher">Akun Guru</option>
               <option value="admin">Akun Admin</option>
             </select>
+
             <input
               required
               placeholder="Nama Lengkap"
@@ -357,41 +429,69 @@ export function AdminDashboard() {
               onChange={(e) => setUName(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
             />
-            <input
-              required
-              placeholder="Username (untuk login)"
-              value={uUsername}
-              onChange={(e) => setUUsername(e.target.value)}
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
-            />
-            <input
-              required
-              type="password"
-              placeholder="Password"
-              value={uPassword}
-              onChange={(e) => setUPassword(e.target.value)}
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
-            />
-            <input
-              placeholder={uRole === 'student' ? 'NISN / NIS (opsional)' : 'NIP (opsional)'}
-              value={uIdentity}
-              onChange={(e) => setUIdentity(e.target.value)}
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
-            />
-            {uRole === 'student' && classes.length > 0 && (
-              <select
-                value={uClassId}
-                onChange={(e) => setUClassId(e.target.value)}
-                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
-              >
-                <option value="">-- Langsung Masukkan ke Kelas (Opsional) --</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.academicYear})
-                  </option>
-                ))}
-              </select>
+
+            {uRole === 'student' ? (
+              <>
+                <input
+                  required
+                  placeholder="NISN Siswa (Sekaligus Password Awal)"
+                  value={uIdentity}
+                  onChange={(e) => setUIdentity(e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm font-mono"
+                />
+                <select
+                  value={uGender}
+                  onChange={(e) => setUGender(e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                >
+                  <option value="Laki-laki">Laki-laki</option>
+                  <option value="Perempuan">Perempuan</option>
+                </select>
+                {classes.length > 0 && (
+                  <select
+                    value={uClassId}
+                    onChange={(e) => setUClassId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                  >
+                    <option value="">-- Pilih Kelas Siswa --</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.academicYear})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-[11px] text-slate-500">
+                  * Password awal otomatis diset sama dengan <strong>NISN</strong>. Saat login
+                  pertama, siswa akan diminta mengganti password.
+                </p>
+              </>
+            ) : (
+              <>
+                <input
+                  required
+                  placeholder="Username (untuk login Guru/Admin)"
+                  value={uUsername}
+                  onChange={(e) => setUUsername(e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+                <input
+                  required
+                  type="password"
+                  placeholder="Password"
+                  value={uPassword}
+                  onChange={(e) => setUPassword(e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+                <input
+                  placeholder="NIP (opsional)"
+                  value={uIdentity}
+                  onChange={(e) => setUIdentity(e.target.value)}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+              </>
             )}
+
             <button
               type="submit"
               className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-sm font-semibold shadow-sm cursor-pointer"
@@ -400,52 +500,108 @@ export function AdminDashboard() {
             </button>
           </form>
 
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-            <div className="p-4 border-b border-slate-200 font-bold text-slate-900">
-              Daftar Pengguna ({users.length})
+          <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="font-bold text-slate-900">
+                Daftar Akun ({filteredUsers.length})
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    placeholder="Cari nama / NISN / kelas..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 border border-slate-300 rounded-xl text-xs"
+                  />
+                </div>
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value as 'all' | UserRole)}
+                  className="px-2.5 py-1.5 border border-slate-300 rounded-xl text-xs font-semibold"
+                >
+                  <option value="all">Semua Peran</option>
+                  <option value="student">Siswa</option>
+                  <option value="teacher">Guru</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
             </div>
+
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 text-slate-600 uppercase">
                   <tr>
-                    <th className="px-4 py-3">Nama</th>
-                    <th className="px-4 py-3">Username</th>
-                    <th className="px-4 py-3">Peran</th>
-                    <th className="px-4 py-3">NIS/NIP</th>
-                    <th className="px-4 py-3 text-right">Aksi</th>
+                    <th className="px-4 py-3">Nama & JK</th>
+                    <th className="px-4 py-3">NISN / Username</th>
+                    <th className="px-4 py-3">Kelas / Peran</th>
+                    <th className="px-4 py-3">Status Password</th>
+                    <th className="px-4 py-3 text-right">Reset / Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/70 transition">
-                      <td className="px-4 py-3 font-semibold text-slate-900">{u.name}</td>
-                      <td className="px-4 py-3 text-slate-600">@{u.username}</td>
+                  {filteredUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/80 transition">
                       <td className="px-4 py-3">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            u.role === 'teacher'
-                              ? 'bg-violet-100 text-violet-700'
-                              : u.role === 'student'
-                                ? 'bg-sky-100 text-sky-700'
-                                : 'bg-indigo-100 text-indigo-700'
-                          }`}
-                        >
-                          {u.role === 'teacher' ? 'Guru' : u.role === 'student' ? 'Siswa' : 'Admin'}
-                        </span>
+                        <div className="font-bold text-slate-900 text-sm">{u.name}</div>
+                        {u.gender && <div className="text-[11px] text-slate-500">{u.gender}</div>}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{u.identityNumber || '-'}</td>
-                      <td className="px-4 py-3 text-right space-x-1">
-                        <button
-                          onClick={() => setResetUser(u)}
-                          className="text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg cursor-pointer"
-                          title="Ubah Password"
-                        >
-                          <KeyRound className="w-4 h-4 inline" />
-                        </button>
+                      <td className="px-4 py-3 font-mono text-slate-700">
+                        {u.role === 'student' ? u.identityNumber || u.username : `@${u.username}`}
+                      </td>
+                      <td className="px-4 py-3">
+                        {u.role === 'student' ? (
+                          <span className="px-2.5 py-0.5 rounded-full font-semibold bg-sky-100 text-sky-800">
+                            {u.className || 'Siswa'}
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full font-semibold ${
+                              u.role === 'teacher'
+                                ? 'bg-violet-100 text-violet-700'
+                                : 'bg-indigo-100 text-indigo-700'
+                            }`}
+                          >
+                            {u.role === 'teacher' ? 'Guru' : 'Admin'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {u.role === 'student' ? (
+                          u.mustChangePassword === 1 ? (
+                            <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+                              Password = NISN
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                              Sudah Diubah Siswa
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Aktif</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-1.5">
+                        {u.role === 'student' ? (
+                          <button
+                            onClick={() => handleResetStudentToNisn(u)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-[11px] border border-amber-200 cursor-pointer transition"
+                            title="Kembalikan password siswa ke NISN awal"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Reset ke NISN
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setResetUser(u)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-[11px] cursor-pointer"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" /> Ubah Password
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDeleteUser(u.id)}
-                          className="text-rose-500 hover:bg-rose-50 p-1.5 rounded-lg cursor-pointer"
-                          title="Hapus"
+                          className="text-rose-500 hover:bg-rose-50 p-1.5 rounded-lg cursor-pointer align-middle"
+                          title="Hapus akun"
                         >
                           <Trash2 className="w-4 h-4 inline" />
                         </button>
@@ -543,7 +699,7 @@ export function AdminDashboard() {
                       <option value="">-- Pilih Siswa --</option>
                       {students.map((st) => (
                         <option key={st.id} value={st.id}>
-                          {st.name} (@{st.username})
+                          {st.name} ({st.identityNumber || st.username})
                         </option>
                       ))}
                     </select>
@@ -569,7 +725,9 @@ export function AdminDashboard() {
                       >
                         <div>
                           <span className="font-semibold text-slate-900">{m.name}</span>
-                          <span className="text-slate-500 ml-2">(@{m.username})</span>
+                          <span className="text-slate-500 ml-2 font-mono text-xs">
+                            (NISN: {m.identityNumber || m.username})
+                          </span>
                         </div>
                         <button
                           onClick={() => handleRemoveMember(m.studentId)}
@@ -672,14 +830,14 @@ export function AdminDashboard() {
         </div>
       )}
 
-      {/* Modal Reset Password */}
+      {/* Modal Ubah Password Guru/Admin */}
       {resetUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
           <form
-            onSubmit={handleResetPassword}
+            onSubmit={handleResetCustomPassword}
             className="animate-scale-in bg-white rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl"
           >
-            <h3 className="font-bold text-slate-900">Reset Password: {resetUser.name}</h3>
+            <h3 className="font-bold text-slate-900">Ubah Password: {resetUser.name}</h3>
             <input
               required
               type="password"

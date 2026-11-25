@@ -3,7 +3,7 @@
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(18px);
   }
   to {
     opacity: 1;
@@ -14,7 +14,7 @@
 @keyframes scaleIn {
   from {
     opacity: 0;
-    transform: scale(0.95);
+    transform: scale(0.94);
   }
   to {
     opacity: 1;
@@ -27,7 +27,7 @@
     transform: translateY(0px) rotate(0deg);
   }
   50% {
-    transform: translateY(-14px) rotate(2deg);
+    transform: translateY(-14px) rotate(3deg);
   }
 }
 
@@ -36,17 +36,83 @@
     transform: translateY(0px) rotate(0deg);
   }
   50% {
-    transform: translateY(12px) rotate(-2deg);
+    transform: translateY(12px) rotate(-3deg);
   }
 }
 
-@keyframes slideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
+@keyframes marqueeScroll {
+  0% {
+    transform: translateX(0%);
   }
-  to {
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes rocketHover {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-10px) translateX(6px) rotate(4deg);
+  }
+}
+
+@keyframes cloudDrift {
+  0% {
+    transform: translateX(-20px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(25px);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateX(-20px);
+    opacity: 0.45;
+  }
+}
+
+@keyframes twinkleStar {
+  0%, 100% {
+    transform: scale(0.85) rotate(0deg);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.25) rotate(18deg);
     opacity: 1;
+  }
+}
+
+@keyframes shimmerSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+@keyframes gradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes waveSlide {
+  0% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-25px);
+  }
+  100% {
     transform: translateX(0);
   }
 }
@@ -60,27 +126,53 @@
 }
 
 .animate-float-slow {
-  animation: floatSlow 6s ease-in-out infinite;
+  animation: floatSlow 5.5s ease-in-out infinite;
 }
 
 .animate-float-reverse {
-  animation: floatReverse 7s ease-in-out infinite;
+  animation: floatReverse 6.5s ease-in-out infinite;
 }
 
-.animate-slide-right {
-  animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 28s linear infinite;
 }
 
-.stagger-1 { animation-delay: 60ms; }
-.stagger-2 { animation-delay: 120ms; }
-.stagger-3 { animation-delay: 180ms; }
-.stagger-4 { animation-delay: 240ms; }
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+.animate-rocket {
+  animation: rocketHover 3.6s ease-in-out infinite;
+}
+
+.animate-cloud {
+  animation: cloudDrift 8s ease-in-out infinite;
+}
+
+.animate-twinkle {
+  animation: twinkleStar 2.6s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  animation: shimmerSlide 2.4s ease-in-out infinite;
+}
+
+.animate-gradient-hero {
+  background-size: 220% 220%;
+  animation: gradientFlow 9s ease infinite;
+}
+
+.animate-wave {
+  animation: waveSlide 5s ease-in-out infinite;
+}
 
 .card-interactive {
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease;
 }
 
 .card-interactive:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 28px -8px rgba(79, 70, 229, 0.14), 0 4px 12px -4px rgba(15, 23, 42, 0.06);
+  transform: translateY(-4px);
+  box-shadow: 0 14px 30px -8px rgba(79, 70, 229, 0.16), 0 4px 12px -4px rgba(15, 23, 42, 0.06);
 }

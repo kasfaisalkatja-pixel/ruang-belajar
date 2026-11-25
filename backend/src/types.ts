@@ -6,6 +6,8 @@ export interface AuthUser {
   username: string;
   role: UserRole;
   identityNumber?: string | null;
+  gender?: string | null;
+  mustChangePassword?: boolean;
 }
 
 export interface Bindings {

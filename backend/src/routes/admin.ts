@@ -9,13 +9,17 @@ import {
   subjects,
   users,
 } from '../db/schema';
+import { ensureUserSchema } from '../db/migrate';
 import { generateId, hashPassword } from '../lib/crypto';
 import { requireAuth, requireRole } from '../middleware/auth';
 import type { Bindings, UserRole, Variables } from '../types';
 
 export const adminRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-adminRoutes.use('*', requireAuth, requireRole('admin'));
+adminRoutes.use('*', requireAuth, requireRole('admin'), async (c, next) => {
+  await ensureUserSchema(c.env.DB);
+  await next();
+});
 
 adminRoutes.get('/stats', async (c) => {
   const db = drizzle(c.env.DB);
@@ -42,49 +46,65 @@ adminRoutes.get('/users', async (c) => {
   const role = c.req.query('role') as UserRole | undefined;
   const db = drizzle(c.env.DB);
 
-  const rows = role
-    ? await db
-        .select({
-          id: users.id,
-          name: users.name,
-          username: users.username,
-          role: users.role,
-          identityNumber: users.identityNumber,
-          createdAt: users.createdAt,
-        })
-        .from(users)
-        .where(eq(users.role, role))
-        .orderBy(desc(users.createdAt))
-    : await db
-        .select({
-          id: users.id,
-          name: users.name,
-          username: users.username,
-          role: users.role,
-          identityNumber: users.identityNumber,
-          createdAt: users.createdAt,
-        })
-        .from(users)
-        .orderBy(desc(users.createdAt));
+  const allClasses = await db.select().from(classes);
+  const allMembers = await db.select().from(classMembers);
+  const classNameMap = new Map(allClasses.map((cl) => [cl.id, cl.name]));
+  const studentClassMap = new Map<string, string>();
+  for (const m of allMembers) {
+    const cName = classNameMap.get(m.classId);
+    if (cName) studentClassMap.set(m.studentId, cName);
+  }
 
-  return c.json({ users: rows });
+  const baseSelect = {
+    id: users.id,
+    name: users.name,
+    username: users.username,
+    role: users.role,
+    identityNumber: users.identityNumber,
+    gender: users.gender,
+    mustChangePassword: users.mustChangePassword,
+    createdAt: users.createdAt,
+  };
+
+  const rows = role
+    ? await db.select(baseSelect).from(users).where(eq(users.role, role)).orderBy(desc(users.createdAt))
+    : await db.select(baseSelect).from(users).orderBy(desc(users.createdAt));
+
+  return c.json({
+    users: rows.map((u) => ({
+      ...u,
+      className: studentClassMap.get(u.id) || null,
+    })),
+  });
 });
 
 adminRoutes.post('/users', async (c) => {
   const body = await c.req.json<{
     name: string;
-    username: string;
-    password: string;
+    username?: string;
+    password?: string;
     role: UserRole;
     identityNumber?: string;
+    gender?: string;
     classId?: string;
   }>();
 
-  if (!body.name || !body.username || !body.password || !body.role) {
-    return c.json({ error: 'Nama, username, password, dan peran wajib diisi' }, 400);
+  if (!body.name || !body.role) {
+    return c.json({ error: 'Nama dan peran wajib diisi' }, 400);
   }
 
-  const normalizedUsername = body.username.trim().toLowerCase();
+  const nisn = body.identityNumber?.trim() || '';
+  if (body.role === 'student' && !nisn) {
+    return c.json({ error: 'NISN wajib diisi untuk akun Siswa' }, 400);
+  }
+
+  const normalizedUsername = (body.username?.trim() || nisn).toLowerCase();
+  const initialPassword = body.role === 'student' ? body.password?.trim() || nisn : body.password?.trim() || '';
+
+  if (!normalizedUsername || !initialPassword) {
+    return c.json({ error: 'Username dan password wajib diisi' }, 400);
+  }
+
   const db = drizzle(c.env.DB);
   const existing = await db
     .select({ id: users.id })
@@ -93,12 +113,13 @@ adminRoutes.post('/users', async (c) => {
     .limit(1);
 
   if (existing.length > 0) {
-    return c.json({ error: 'Username sudah digunakan' }, 409);
+    return c.json({ error: 'Username / NISN sudah terdaftar' }, 409);
   }
 
   const id = generateId();
-  const passwordHash = await hashPassword(body.password);
+  const passwordHash = await hashPassword(initialPassword);
   const createdAt = new Date().toISOString();
+  const mustChangePassword = body.role === 'student' ? 1 : 0;
 
   await db.insert(users).values({
     id,
@@ -106,11 +127,12 @@ adminRoutes.post('/users', async (c) => {
     username: normalizedUsername,
     passwordHash,
     role: body.role,
-    identityNumber: body.identityNumber?.trim() || null,
+    identityNumber: nisn || null,
+    gender: body.gender?.trim() || null,
+    mustChangePassword,
     createdAt,
   });
 
-  // Auto-enroll student into selected class if provided
   if (body.role === 'student' && body.classId) {
     await db.insert(classMembers).values({
       id: generateId(),
@@ -120,19 +142,145 @@ adminRoutes.post('/users', async (c) => {
     });
   }
 
-  return c.json(
-    {
-      user: {
-        id,
-        name: body.name.trim(),
-        username: normalizedUsername,
-        role: body.role,
-        identityNumber: body.identityNumber?.trim() || null,
-        createdAt,
-      },
-    },
-    201
-  );
+  return c.json({ message: 'Akun berhasil dibuat', id }, 201);
+});
+
+/**
+ * Batch Import Students from Excel (Nomor, Nama, Jenis Kelamin, NISN, Kelas).
+ * Sent in small batches from frontend (e.g. 5 rows per request) so PBKDF2 hashing stays well inside Workers CPU limits.
+ */
+adminRoutes.post('/students/import', async (c) => {
+  const body = await c.req.json<{
+    academicYear?: string;
+    students: Array<{
+      name: string;
+      gender?: string;
+      nisn: string;
+      className: string;
+    }>;
+  }>();
+
+  if (!Array.isArray(body.students) || body.students.length === 0) {
+    return c.json({ error: 'Data siswa kosong' }, 400);
+  }
+
+  const academicYear = body.academicYear?.trim() || '2026/2027';
+  const db = drizzle(c.env.DB);
+
+  const existingClasses = await db.select().from(classes);
+  const classMap = new Map(existingClasses.map((cl) => [cl.name.trim().toLowerCase(), cl.id]));
+
+  let created = 0;
+  let updated = 0;
+  const now = new Date().toISOString();
+
+  for (const row of body.students) {
+    const name = String(row.name ?? '').trim();
+    const nisn = String(row.nisn ?? '').trim();
+    const gender = String(row.gender ?? '').trim() || null;
+    const classNameRaw = String(row.className ?? '').trim();
+
+    if (!name || !nisn) continue;
+
+    // Auto-create class if it doesn't exist yet
+    let classId: string | null = null;
+    if (classNameRaw) {
+      const classKey = classNameRaw.toLowerCase();
+      if (classMap.has(classKey)) {
+        classId = classMap.get(classKey)!;
+      } else {
+        classId = generateId();
+        await db.insert(classes).values({
+          id: classId,
+          name: classNameRaw,
+          academicYear,
+          createdAt: now,
+        });
+        classMap.set(classKey, classId);
+      }
+    }
+
+    // Check if student with this NISN/username already exists
+    const username = nisn.toLowerCase();
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
+
+    let studentId: string;
+    if (existingUser) {
+      studentId = existingUser.id;
+      await db
+        .update(users)
+        .set({
+          name,
+          identityNumber: nisn,
+          gender: gender ?? existingUser.gender,
+        })
+        .where(eq(users.id, studentId));
+      updated++;
+    } else {
+      studentId = generateId();
+      const passwordHash = await hashPassword(nisn);
+      await db.insert(users).values({
+        id: studentId,
+        name,
+        username,
+        passwordHash,
+        role: 'student',
+        identityNumber: nisn,
+        gender,
+        mustChangePassword: 1,
+        createdAt: now,
+      });
+      created++;
+    }
+
+    if (classId) {
+      // Remove previous class memberships and assign the imported class
+      await db.delete(classMembers).where(eq(classMembers.studentId, studentId));
+      await db.insert(classMembers).values({
+        id: generateId(),
+        classId,
+        studentId,
+        joinedAt: now,
+      });
+    }
+  }
+
+  return c.json({ created, updated });
+});
+
+/**
+ * 1-Click Reset Student Password back to initial password = NISN (and require password change on next login)
+ */
+adminRoutes.post('/users/:id/reset-nisn', async (c) => {
+  const id = c.req.param('id');
+  const db = drizzle(c.env.DB);
+
+  const [target] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  if (!target) {
+    return c.json({ error: 'Pengguna tidak ditemukan' }, 404);
+  }
+
+  const nisn = (target.identityNumber || target.username || '').trim();
+  if (!nisn) {
+    return c.json({ error: 'Siswa ini belum memiliki NISN' }, 400);
+  }
+
+  const passwordHash = await hashPassword(nisn);
+  await db
+    .update(users)
+    .set({
+      passwordHash,
+      mustChangePassword: 1,
+    })
+    .where(eq(users.id, id));
+
+  return c.json({
+    message: `Password ${target.name} berhasil direset kembali ke NISN (${nisn})! Siswa akan diminta membuat password baru saat login berikutnya.`,
+  });
 });
 
 adminRoutes.patch('/users/:id', async (c) => {
@@ -141,13 +289,18 @@ adminRoutes.patch('/users/:id', async (c) => {
     name?: string;
     password?: string;
     identityNumber?: string;
+    gender?: string;
   }>();
 
   const db = drizzle(c.env.DB);
   const updates: Record<string, unknown> = {};
   if (body.name?.trim()) updates.name = body.name.trim();
   if (body.identityNumber !== undefined) updates.identityNumber = body.identityNumber.trim() || null;
-  if (body.password?.trim()) updates.passwordHash = await hashPassword(body.password.trim());
+  if (body.gender !== undefined) updates.gender = body.gender.trim() || null;
+  if (body.password?.trim()) {
+    updates.passwordHash = await hashPassword(body.password.trim());
+    updates.mustChangePassword = 0;
+  }
 
   if (Object.keys(updates).length > 0) {
     await db.update(users).set(updates).where(eq(users.id, id));
@@ -220,6 +373,7 @@ adminRoutes.get('/classes/:id/members', async (c) => {
       name: users.name,
       username: users.username,
       identityNumber: users.identityNumber,
+      gender: users.gender,
       joinedAt: classMembers.joinedAt,
     })
     .from(classMembers)

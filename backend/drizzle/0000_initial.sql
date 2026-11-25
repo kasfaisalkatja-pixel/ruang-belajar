@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS `users` (
   `password_hash` text NOT NULL,
   `role` text NOT NULL,
   `identity_number` text,
+  `gender` text,
+  `must_change_password` integer DEFAULT 0 NOT NULL,
   `created_at` text NOT NULL
 );
 

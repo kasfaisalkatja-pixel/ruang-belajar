@@ -12,10 +12,13 @@ import {
   Award,
   Layers,
   Clock,
+  Rocket,
+  Star,
 } from 'lucide-react';
 import { apiFetch, downloadProtectedFile, getFileBadgeMeta } from '../lib/api';
 import { FileDropzone } from '../components/FileDropzone';
 import { FileViewerModal } from '../components/FileViewerModal';
+import { RunningBanner } from '../components/RunningBanner';
 
 interface TeacherSubject {
   id: string;
@@ -74,7 +77,11 @@ interface ReadRow {
   readAt: string | null;
 }
 
-export function TeacherDashboard() {
+interface Props {
+  showBanner?: boolean;
+}
+
+export function TeacherDashboard({ showBanner = true }: Props) {
   const [subjects, setSubjects] = useState<TeacherSubject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
   const [tab, setTab] = useState<'overview' | 'materials' | 'assignments'>('materials');
@@ -101,7 +108,9 @@ export function TeacherDashboard() {
   const [aFile, setAFile] = useState<File | null>(null);
 
   // Modals & Detail Views
-  const [previewFile, setPreviewFile] = useState<{ key: string; name?: string | null } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ key: string; name?: string | null } | null>(
+    null
+  );
   const [gradingAssignment, setGradingAssignment] = useState<AssignmentItem | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const [scores, setScores] = useState<Record<string, { score: string; feedback: string }>>({});
@@ -284,12 +293,26 @@ export function TeacherDashboard() {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      {/* Top Subject Selector & Hero Banner */}
-      <div className="bg-gradient-to-r from-indigo-600 via-violet-600 to-sky-600 rounded-2xl p-6 text-white shadow-lg">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {showBanner && (
+        <RunningBanner
+          variant="teacher"
+          items={[
+            'Selamat datang di Ruang Mengajar Guru! Bagikan modul PDF, Word (.docx), PPT & Video dengan mudah',
+            `Kelas aktif saat ini: ${activeSubject ? `${activeSubject.className} (${activeSubject.name})` : '-'}`,
+            'Pantau siswa yang sudah membaca materi dan periksa pengumpulan tugas secara real-time',
+          ]}
+        />
+      )}
+
+      {/* Animated Hero Banner */}
+      <div className="relative overflow-hidden animate-gradient-hero bg-gradient-to-r from-indigo-600 via-violet-600 to-sky-600 rounded-3xl p-6 text-white shadow-lg">
+        <Star className="pointer-events-none absolute top-4 right-40 w-5 h-5 text-amber-300 animate-twinkle" />
+        <Rocket className="pointer-events-none hidden md:block absolute bottom-4 right-8 w-10 h-10 text-white/20 animate-rocket" />
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <span className="inline-block text-xs font-semibold uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full mb-2">
-              Ruang Mengajar Guru
+            <span className="inline-block text-xs font-bold uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full mb-2">
+              Ruang Mengajar Digital
             </span>
             <h2 className="text-2xl font-extrabold">
               {activeSubject ? `${activeSubject.name} — ${activeSubject.className}` : 'Pilih Mapel'}
@@ -300,14 +323,14 @@ export function TeacherDashboard() {
             </p>
           </div>
 
-          <div className="min-w-[250px]">
-            <label className="block text-[11px] font-semibold text-indigo-100 mb-1">
+          <div className="min-w-[260px]">
+            <label className="block text-[11px] font-bold text-indigo-100 mb-1">
               Pilih Kelas & Mata Pelajaran Aktif:
             </label>
             <select
               value={selectedSubjectId}
               onChange={(e) => setSelectedSubjectId(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-white text-slate-900 text-sm font-semibold shadow-sm focus:outline-none"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white text-slate-900 text-sm font-bold shadow-sm focus:outline-none"
             >
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -482,8 +505,8 @@ export function TeacherDashboard() {
 
             {materials.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-sm text-slate-500">
-                Belum ada materi di mata pelajaran ini. Silakan kirim materi PDF/Word dari formulir di
-                samping.
+                Belum ada materi di mata pelajaran ini. Silakan kirim materi PDF/Word dari formulir
+                di samping.
               </div>
             ) : (
               materials.map((m) => {
@@ -741,7 +764,9 @@ export function TeacherDashboard() {
                     <div>
                       <span className="font-bold text-slate-900">{row.studentName}</span>
                       {row.identityNumber && (
-                        <span className="text-xs text-slate-500 ml-2">({row.identityNumber})</span>
+                        <span className="text-xs text-slate-500 ml-2 font-mono">
+                          (NISN: {row.identityNumber})
+                        </span>
                       )}
                     </div>
                     {sub ? (

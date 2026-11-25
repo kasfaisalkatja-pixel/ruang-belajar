@@ -8,6 +8,8 @@ export interface User {
   username: string;
   role: UserRole;
   identityNumber?: string | null;
+  gender?: string | null;
+  mustChangePassword?: boolean;
 }
 
 export function getToken(): string | null {
