@@ -72,6 +72,7 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
         const rawGrid = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
           header: 1,
           defval: '',
+          raw: false,
         });
 
         if (rawGrid.length < 2) {
@@ -80,34 +81,54 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
           return;
         }
 
-        // Detect header row (matching Nomor | Nama | Jenis Kelamin | NISN | Kelas)
-        const headerRow = (rawGrid[0] as unknown[]).map((cell) =>
+        // Find actual header row (in case row 1 is a title and row 2 is Nomor | Nama | Jenis Kelamin | NISN | Kelas)
+        let headerRowIndex = 0;
+        for (let rIdx = 0; rIdx < Math.min(rawGrid.length, 6); rIdx++) {
+          const candidate = (rawGrid[rIdx] as unknown[]).map((c) =>
+            String(c ?? '')
+              .trim()
+              .toLowerCase()
+          );
+          if (candidate.some((c) => c === 'nama' || c.includes('nama')) && candidate.some((c) => /\bnisn?\b/.test(c))) {
+            headerRowIndex = rIdx;
+            break;
+          }
+        }
+
+        const headerRow = (rawGrid[headerRowIndex] as unknown[]).map((cell) =>
           String(cell ?? '')
             .trim()
             .toLowerCase()
         );
 
-        const findIdx = (keywords: string[], fallbackIdx: number) => {
-          const idx = headerRow.findIndex((h) => keywords.some((k) => h.includes(k)));
+        // Word-boundary safe column detection (prevents "jenis kelamin" from ever matching "nis"!)
+        const findCol = (matcher: (h: string) => boolean, fallbackIdx: number) => {
+          const idx = headerRow.findIndex(matcher);
           return idx >= 0 ? idx : fallbackIdx;
         };
 
-        const idxNomor = findIdx(['nomor', 'no'], 0);
-        const idxNama = findIdx(['nama'], 1);
-        const idxGender = findIdx(['jenis kelamin', 'kelamin', 'jk', 'gender'], 2);
-        const idxNisn = findIdx(['nisn', 'nis'], 3);
-        const idxKelas = findIdx(['kelas', 'rombel'], 4);
+        const idxNomor = findCol((h) => /^no(\.|mor)?$/.test(h) || h === 'urut', 0);
+        const idxNama = findCol((h) => h === 'nama' || h.includes('nama'), 1);
+        const idxGender = findCol(
+          (h) => h.includes('kelamin') || h === 'jk' || h === 'l/p' || h === 'gender',
+          2
+        );
+        const idxNisn = findCol(
+          (h) => !h.includes('jenis') && (h === 'nisn' || h === 'nis' || /\bnisn\b/.test(h) || /\bnis\b/.test(h)),
+          3
+        );
+        const idxKelas = findCol((h) => h.includes('kelas') || h.includes('rombel'), 4);
 
         const parsed: ParsedStudentRow[] = [];
-        for (let i = 1; i < rawGrid.length; i++) {
+        for (let i = headerRowIndex + 1; i < rawGrid.length; i++) {
           const r = rawGrid[i] as unknown[];
           if (!r || r.length === 0) continue;
 
           const name = String(r[idxNama] ?? '').trim();
-          const nisn = String(r[idxNisn] ?? '').trim();
+          const nisn = String(r[idxNisn] ?? '').trim().replace(/\s+/g, '');
           const gender = String(r[idxGender] ?? '').trim();
           const className = String(r[idxKelas] ?? '').trim();
-          const nomor = String(r[idxNomor] ?? i).trim();
+          const nomor = String(r[idxNomor] ?? parsed.length + 1).trim();
 
           if (!name && !nisn) continue;
           if (!name || !nisn) continue;
@@ -131,6 +152,14 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
     reader.readAsArrayBuffer(file);
   }
 
+  // Detect any duplicate NISN inside the Excel sheet itself so Admin knows immediately
+  const nisnCounts = rows.reduce<Record<string, number>>((acc, r) => {
+    const key = r.nisn.toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const duplicateNisns = Object.keys(nisnCounts).filter((k) => nisnCounts[k] > 1);
+
   async function handleRunImport() {
     if (rows.length === 0) return;
     setImporting(true);
@@ -140,7 +169,7 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
 
     let totalCreated = 0;
     let totalUpdated = 0;
-    const BATCH_SIZE = 5; // Safe batch size for Cloudflare Workers PBKDF2 hashing
+    const BATCH_SIZE = 5;
 
     try {
       for (let i = 0; i < rows.length; i += BATCH_SIZE) {
@@ -166,7 +195,7 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
       }
 
       setResultMsg(
-        `Berhasil mengimpor ${rows.length} siswa (${totalCreated} akun baru dibuat, ${totalUpdated} diperbarui)! Siswa dapat langsung login menggunakan Nama & NISN.`
+        `Selesai! ${totalCreated + totalUpdated} dari ${rows.length} siswa berhasil disimpan (${totalCreated} akun siswa baru dibuat, ${totalUpdated} diperbarui).`
       );
       setRows([]);
       setFileName('');
@@ -193,7 +222,8 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
                 Import Data Siswa dari Excel (.xlsx)
               </h2>
               <p className="text-xs text-slate-500">
-                Format kolom sesuai standar: <strong>Nomor | Nama | Jenis Kelamin | NISN | Kelas</strong>
+                Format kolom sesuai standar:{' '}
+                <strong>Nomor | Nama | Jenis Kelamin | NISN | Kelas</strong>
               </p>
             </div>
           </div>
@@ -235,9 +265,9 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
             </table>
           </div>
           <p className="text-[11px] text-slate-500">
-            * Kelas yang tertulis di kolom <strong>Kelas</strong> akan otomatis dibuatkan (jika belum
-            ada) dan siswa otomatis dimasukkan ke kelas tersebut. Password awal siswa otomatis diset ke{' '}
-            <strong>NISN</strong>.
+            * Pastikan setiap siswa memiliki <strong>NISN yang unik/berbeda</strong>. Kelas yang
+            tertulis di kolom <strong>Kelas</strong> otomatis dibuatkan dan password awal siswa diset
+            ke <strong>NISN</strong>.
           </p>
         </div>
 
@@ -294,6 +324,17 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
           </div>
         </div>
 
+        {duplicateNisns.length > 0 && (
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+            <span>
+              Perhatian: Ditemukan NISN ganda di file Excel ({duplicateNisns.slice(0, 5).join(', ')}
+              ). Siswa dengan NISN kosong/sama akan tetap dibuatkan akun terpisah secara otomatis
+              agar tidak saling menimpa.
+            </span>
+          </div>
+        )}
+
         {error && (
           <div className="animate-scale-in p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" /> {error}
@@ -309,7 +350,7 @@ export function StudentExcelImporter({ onImportComplete }: Props) {
         {importing && (
           <div className="space-y-2 bg-indigo-50 p-4 rounded-xl border border-indigo-200">
             <div className="flex justify-between text-xs font-bold text-indigo-900">
-              <span>Membuat akun siswa & mengenkripsi NISN...</span>
+              <span>Menyimpan data siswa ke database...</span>
               <span>
                 {progress.current} / {progress.total} ({pct}%)
               </span>

@@ -203,33 +203,47 @@ adminRoutes.post('/students/import', async (c) => {
       }
     }
 
-    // Check if student with this NISN/username already exists
-    const username = nisn.toLowerCase();
-    const [existingUser] = await db
+    // Check if student with this exact NISN AND same name already exists;
+    // if another student shares a placeholder/duplicate NISN, generate a unique username so no student overwrites another!
+    const baseUsername = nisn.toLowerCase();
+    const existingByNisn = await db
       .select()
       .from(users)
-      .where(eq(users.username, username))
-      .limit(1);
+      .where(eq(users.identityNumber, nisn));
+
+    const samePerson = existingByNisn.find(
+      (u) => u.name.trim().toLowerCase() === name.toLowerCase()
+    );
 
     let studentId: string;
-    if (existingUser) {
-      studentId = existingUser.id;
+    if (samePerson) {
+      studentId = samePerson.id;
       await db
         .update(users)
         .set({
           name,
           identityNumber: nisn,
-          gender: gender ?? existingUser.gender,
+          gender: gender ?? samePerson.gender,
         })
         .where(eq(users.id, studentId));
       updated++;
     } else {
       studentId = generateId();
+      let candidateUsername = baseUsername;
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.username, candidateUsername))
+        .limit(1);
+      if (taken) {
+        candidateUsername = `${baseUsername}-${studentId.slice(0, 6)}`;
+      }
+
       const passwordHash = await hashPassword(nisn);
       await db.insert(users).values({
         id: studentId,
         name,
-        username,
+        username: candidateUsername,
         passwordHash,
         role: 'student',
         identityNumber: nisn,

@@ -15,6 +15,9 @@ function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
+const FAST_ITERATIONS = 25_000; // Safe & fast within Cloudflare Workers Free 10ms CPU budget
+const LEGACY_ITERATIONS = 100_000;
+
 /** Hash password using PBKDF2-SHA256 via Web Crypto API (Cloudflare Workers compatible). */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -26,17 +29,31 @@ export async function hashPassword(password: string): Promise<string> {
     ['deriveBits']
   );
   const derived = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: FAST_ITERATIONS, hash: 'SHA-256' },
     keyMaterial,
     256
   );
-  return `${toHex(salt)}:${toHex(derived)}`;
+  return `v2:${toHex(salt)}:${toHex(derived)}`;
 }
 
-/** Verify password against stored PBKDF2-SHA256 hash. */
+/** Verify password against stored PBKDF2-SHA256 hash (supports both v2 and legacy hashes). */
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const [saltHex, hashHex] = storedHash.split(':');
-  if (!saltHex || !hashHex) return false;
+  let iterations = LEGACY_ITERATIONS;
+  let saltHex = '';
+  let hashHex = '';
+
+  if (storedHash.startsWith('v2:')) {
+    const parts = storedHash.split(':');
+    if (parts.length !== 3) return false;
+    iterations = FAST_ITERATIONS;
+    saltHex = parts[1];
+    hashHex = parts[2];
+  } else {
+    const parts = storedHash.split(':');
+    if (parts.length !== 2) return false;
+    saltHex = parts[0];
+    hashHex = parts[1];
+  }
 
   const salt = fromHex(saltHex);
   const keyMaterial = await crypto.subtle.importKey(
@@ -47,7 +64,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
     ['deriveBits']
   );
   const derived = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     keyMaterial,
     256
   );
